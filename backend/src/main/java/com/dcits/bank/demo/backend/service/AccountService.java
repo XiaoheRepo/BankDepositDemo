@@ -79,7 +79,7 @@ public class AccountService {
 
         accountingService.generateEntries(trans);
 
-        return new OpenAccountResponse(customerId, account.getAccountId(), cardNo, accountNo);
+        return new OpenAccountResponse(cardNo, accountNo);
     }
 
     // ==================== 功能2：存款交易 ====================
@@ -196,8 +196,7 @@ public class AccountService {
             // 查找关联的转入流水
             BusinessTransaction related = transactionMapper.selectById(existing.getRelatedTransId());
             return new TransferResponse(existing.getTransId(), related != null ? related.getTransId() : null,
-                    existing.getBalanceAfter(), related != null ? related.getBalanceAfter() : null,
-                    existing.getStatus());
+                    existing.getBalanceAfter(), existing.getStatus());
         }
 
         // 2. 转出方账户定位 + 验密
@@ -254,7 +253,7 @@ public class AccountService {
         accountingService.generateEntries(toTrans);
 
         return new TransferResponse(fromTrans.getTransId(), toTrans.getTransId(),
-                fromBalanceAfter, toBalanceAfter, fromTrans.getStatus());
+                fromBalanceAfter, fromTrans.getStatus());
     }
 
     /** 校验转入方账户存在、状态正常、且为活期账户。 */

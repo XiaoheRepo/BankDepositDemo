@@ -23,9 +23,6 @@ public class TransferResponse {
     @Schema(description = "转出方交易后余额")
     private BigDecimal fromBalanceAfter;
 
-    @Schema(description = "转入方交易后余额")
-    private BigDecimal toBalanceAfter;
-
     @Schema(description = "交易状态（1-成功）")
     private Integer status;
 }

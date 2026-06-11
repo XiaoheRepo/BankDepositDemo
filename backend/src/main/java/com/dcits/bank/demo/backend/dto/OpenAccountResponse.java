@@ -12,12 +12,6 @@ import lombok.Data;
 @Schema(description = "开户响应")
 public class OpenAccountResponse {
 
-    @Schema(description = "客户ID")
-    private Long customerId;
-
-    @Schema(description = "账户ID")
-    private Long accountId;
-
     @Schema(description = "银行卡号（对外，Luhn校验位）", example = "6217001234567890123")
     private String cardNo;
 
