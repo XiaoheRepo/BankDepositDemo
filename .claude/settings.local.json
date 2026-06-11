@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./mvnw compile *)"
+      "Bash(./mvnw compile *)",
+      "Bash(curl -s http://localhost:8080/api/health)",
+      "Bash(curl -s http://localhost:8080/api/protected/test)",
+      "Bash(curl -s -H \"X-Auth-Token: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\" http://localhost:8080/api/protected/test)",
+      "Bash(./mvnw spring-boot:run -q)"
     ]
   }
 }
