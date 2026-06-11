@@ -47,4 +47,10 @@ public class AccountController {
     public ApiResult<Long> updateCustomer(@RequestBody UpdateCustomerRequest request) {
         return ApiResult.success(accountService.updateCustomer(request));
     }
+
+    @Operation(summary = "交易流水查询", description = "查询账户动账明细。密码鉴权，时间跨度不超过90天，分页返回脱敏后的交易记录。")
+    @PostMapping("/transactions")
+    public ApiResult<TransactionQueryResponse> queryTransactions(@RequestBody TransactionQueryRequest request) {
+        return ApiResult.success(accountService.queryTransactions(request));
+    }
 }

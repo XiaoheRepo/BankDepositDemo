@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 public class AccountService {
@@ -298,6 +299,49 @@ public class AccountService {
         customer.setAddress(req.getAddress());
         customerMapper.updateContact(customer);
         return account.getCustomerId();
+    }
+
+    // ==================== 功能8：交易流水查询 ====================
+
+    /**
+     * 交易流水查询 — 对应基线文档 功能8。
+     * 密码鉴权 + 时间跨度风控（≤90天）+ 分页检索 + 对外脱敏。
+     */
+    public TransactionQueryResponse queryTransactions(TransactionQueryRequest req) {
+        // 1. 鉴权
+        Account account = locateAndAuthAccount(req.getCardNo(), req.getPassword());
+
+        // 2. 时间跨度风控
+        LocalDateTime start = LocalDateTime.parse(req.getStartDate(), java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        LocalDateTime end = LocalDateTime.parse(req.getEndDate(), java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        if (java.time.temporal.ChronoUnit.DAYS.between(start, end) > 90) {
+            throw new BusinessException(ResultCode.TIME_RANGE_TOO_LARGE);
+        }
+        if (end.isBefore(start)) {
+            throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "结束时间不能早于开始时间");
+        }
+
+        // 3. 分页参数
+        int pageNum = req.getPageNum() != null ? req.getPageNum() : 1;
+        int pageSize = req.getPageSize() != null ? req.getPageSize() : 10;
+        int offset = (pageNum - 1) * pageSize;
+
+        // 4. 总数 + 分页数据
+        long total = transactionMapper.countByAccountAndTime(account.getAccountId(), start, end, req.getTransType());
+        List<BusinessTransaction> list = transactionMapper.selectByAccountAndTimePaged(
+                account.getAccountId(), start, end, req.getTransType(), pageSize, offset);
+
+        // 5. 组装并脱敏（不暴露 trans_id、对方账号完整明文等）
+        List<TransactionItem> items = list.stream().map(t -> new TransactionItem(
+                t.getTransTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
+                t.getTransType(),
+                t.getDcFlag(),
+                t.getTransAmount(),
+                t.getBalanceAfter(),
+                t.getRemark()
+        )).toList();
+
+        return new TransactionQueryResponse(total, items);
     }
 
     // ==================== 公共辅助方法 ====================
