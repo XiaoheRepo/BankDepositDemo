@@ -1,6 +1,7 @@
 package com.dcits.bank.demo.backend.entity;
 
 import lombok.Data;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Data
@@ -14,7 +15,6 @@ public class Customer {
     private String address;
     private LocalDate dateOfBirth;
     private String gender;
-    private Integer age;
     private String branch;
     private Integer status;
     private LocalDateTime createdTime;

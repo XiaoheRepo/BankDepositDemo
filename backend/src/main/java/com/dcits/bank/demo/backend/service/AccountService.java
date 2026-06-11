@@ -7,6 +7,7 @@ import com.dcits.bank.demo.backend.enums.*;
 import com.dcits.bank.demo.backend.exception.BusinessException;
 import com.dcits.bank.demo.backend.mapper.*;
 import com.dcits.bank.demo.backend.util.AccountNoGenerator;
+import com.dcits.bank.demo.backend.util.IdCardUtil;
 import com.dcits.bank.demo.backend.util.LuhnUtil;
 import com.dcits.bank.demo.backend.util.PasswordUtil;
 import org.springframework.stereotype.Service;
@@ -102,6 +103,7 @@ public class AccountService {
 
     /**
      * 根据证件类型+证件号码查询客户，已存在则复用，否则新建。
+     * 证件类型为身份证（01）时自动校验号码合法性并派生出生日期与性别。
      */
     private Long getOrCreateCustomer(OpenAccountRequest req) {
         Customer existing = customerMapper.selectByIdTypeAndIdNumber(req.getIdType(), req.getIdNumber());
@@ -115,9 +117,16 @@ public class AccountService {
         customer.setIdNumber(req.getIdNumber());
         customer.setPhone(req.getPhone());
         customer.setAddress(req.getAddress());
-        customer.setDateOfBirth(req.getDateOfBirth() != null ? LocalDate.parse(req.getDateOfBirth()) : null);
-        customer.setGender(req.getGender());
-        customer.setAge(req.getAge());
+
+        // 身份证：校验合法性，自动派生出生日期及性别并落库
+        if ("01".equals(req.getIdType())) {
+            if (!IdCardUtil.isValid(req.getIdNumber())) {
+                throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "身份证号不合法");
+            }
+            customer.setDateOfBirth(IdCardUtil.birthday(req.getIdNumber()));
+            customer.setGender("MALE".equals(IdCardUtil.gender(req.getIdNumber())) ? "M" : "F");
+        }
+
         customer.setBranch(req.getBranchCode());
         customer.setStatus(CustomerStatus.NORMAL.getCode());
         customerMapper.insert(customer);
@@ -128,7 +137,6 @@ public class AccountService {
      * 生成 Luhn 合规的唯一卡号：BIN(6位) + 随机序列(12位) + 校验位(1位) = 19位。
      */
     private String generateUniqueCardNo() {
-        // 简单实现：BIN + 12位随机 + 校验位。实际生产需保证序列号唯一性。
         String prefix = CARD_BIN + LuhnUtil.randomDigits(12);
         return LuhnUtil.generateCardNo(prefix);
     }
