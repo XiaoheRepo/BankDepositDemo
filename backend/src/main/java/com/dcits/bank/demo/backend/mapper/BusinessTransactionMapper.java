@@ -29,6 +29,9 @@ public interface BusinessTransactionMapper {
                                                      @Param("startTime") LocalDateTime startTime,
                                                      @Param("endTime") LocalDateTime endTime);
 
+    @Update("UPDATE business_transaction SET related_trans_id = #{relatedTransId} WHERE trans_id = #{transId}")
+    int updateRelatedTransId(@Param("transId") Long transId, @Param("relatedTransId") Long relatedTransId);
+
     @Select("SELECT * FROM business_transaction WHERE account_id = #{accountId} " +
             "AND trans_type = #{transType} AND trans_time >= #{startTime} AND trans_time <= #{endTime} " +
             "ORDER BY trans_time DESC")
@@ -36,4 +39,27 @@ public interface BusinessTransactionMapper {
                                                          @Param("startTime") LocalDateTime startTime,
                                                          @Param("endTime") LocalDateTime endTime,
                                                          @Param("transType") String transType);
+
+    @Select("<script>" +
+            "SELECT COUNT(*) FROM business_transaction WHERE account_id = #{accountId} " +
+            "AND trans_time >= #{startTime} AND trans_time &lt;= #{endTime} " +
+            "<if test='transType != null'> AND trans_type = #{transType}</if>" +
+            "</script>")
+    long countByAccountAndTime(@Param("accountId") Long accountId,
+                               @Param("startTime") LocalDateTime startTime,
+                               @Param("endTime") LocalDateTime endTime,
+                               @Param("transType") String transType);
+
+    @Select("<script>" +
+            "SELECT * FROM business_transaction WHERE account_id = #{accountId} " +
+            "AND trans_time >= #{startTime} AND trans_time &lt;= #{endTime} " +
+            "<if test='transType != null'> AND trans_type = #{transType}</if>" +
+            "ORDER BY trans_time DESC LIMIT #{limit} OFFSET #{offset}" +
+            "</script>")
+    List<BusinessTransaction> selectByAccountAndTimePaged(@Param("accountId") Long accountId,
+                                                          @Param("startTime") LocalDateTime startTime,
+                                                          @Param("endTime") LocalDateTime endTime,
+                                                          @Param("transType") String transType,
+                                                          @Param("limit") int limit,
+                                                          @Param("offset") int offset);
 }

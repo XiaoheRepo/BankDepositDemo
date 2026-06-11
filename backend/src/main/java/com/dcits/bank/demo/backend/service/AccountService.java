@@ -180,6 +180,97 @@ public class AccountService {
         return new WithdrawResponse(trans.getTransId(), balanceAfter, trans.getStatus());
     }
 
+    // ==================== 功能4：转账交易 ====================
+
+    /**
+     * 转账交易 — 对应基线文档 功能4。
+     * 行内转账，转出方扣减 + 转入方增加，双流水通过 related_trans_id 互相关联，
+     * 两套会计分录在同一事务中完成。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public TransferResponse transfer(TransferRequest req) {
+        // 1. 幂等校验：同一outTradeNo可能已有转出流水，直接查
+        BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
+        if (existing != null && existing.getStatus().equals(TransStatus.SUCCESS.getCode())) {
+            // 查找关联的转入流水
+            BusinessTransaction related = transactionMapper.selectById(existing.getRelatedTransId());
+            return new TransferResponse(existing.getTransId(), related != null ? related.getTransId() : null,
+                    existing.getBalanceAfter(), related != null ? related.getBalanceAfter() : null,
+                    existing.getStatus());
+        }
+
+        // 2. 转出方账户定位 + 验密
+        Account fromAccount = locateAndAuthAccount(req.getFromCardNo(), req.getPassword());
+
+        // 3. 转入方账户校验（需为活期且状态正常）
+        Account toAccount = validateToAccount(req.getToCardNo());
+
+        if (fromAccount.getAccountId().equals(toAccount.getAccountId())) {
+            throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "不能向自己转账");
+        }
+
+        // 4. 转出方可用余额 + 等级限额
+        BigDecimal available = fromAccount.getBalance().subtract(fromAccount.getFrozenAmount());
+        if (available.compareTo(req.getTransAmount()) < 0) {
+            throw new BusinessException(ResultCode.BALANCE_INSUFFICIENT);
+        }
+        checkLevelLimit(fromAccount.getAccountLevel(), req.getTransAmount());
+
+        // 5. 乐观锁：转出方扣减
+        BigDecimal fromBalanceAfter = updateBalanceWithRetry(fromAccount.getAccountId(),
+                fromAccount.getBalance().subtract(req.getTransAmount()), fromAccount.getVersion());
+
+        // 6. 乐观锁：转入方增加（重新读取最新版本号）
+        Account toLatest = accountMapper.selectById(toAccount.getAccountId());
+        BigDecimal toBalanceAfter = updateBalanceWithRetry(toAccount.getAccountId(),
+                toLatest.getBalance().add(req.getTransAmount()), toLatest.getVersion());
+
+        // 7. 双流水记录（先插入转出，再插入转入，最后互相更新 related_trans_id）
+        BusinessTransaction fromTrans = buildTransaction(fromAccount.getAccountId(), req.getOutTradeNo(),
+                DcFlag.DEBIT.getCode(), TransType.TRANSFER.getCode(),
+                req.getTransAmount(), fromBalanceAfter, req.getChannel(), req.getOperatorId());
+        fromTrans.setCounterPartyAccount(req.getToCardNo());
+        fromTrans.setRemark(req.getRemark());
+        transactionMapper.insert(fromTrans);
+
+        // 转入方幂等号加后缀，避免与转出方的 uk_out_trade_no 冲突
+        BusinessTransaction toTrans = buildTransaction(toAccount.getAccountId(), req.getOutTradeNo() + "_TO",
+                DcFlag.CREDIT.getCode(), TransType.TRANSFER.getCode(),
+                req.getTransAmount(), toBalanceAfter, req.getChannel(), req.getOperatorId());
+        toTrans.setCounterPartyAccount(req.getFromCardNo());
+        toTrans.setRelatedTransId(fromTrans.getTransId());
+        toTrans.setRemark(req.getRemark());
+        transactionMapper.insert(toTrans);
+
+        // 互相绑定
+        transactionMapper.updateRelatedTransId(fromTrans.getTransId(), toTrans.getTransId());
+
+        // 8. 双套会计分录
+        fromTrans.setDcFlag(DcFlag.DEBIT.getCode());  // 转出→借1001贷1002
+        accountingService.generateEntries(fromTrans);
+
+        toTrans.setDcFlag(DcFlag.CREDIT.getCode());   // 转入→借1002贷1001
+        accountingService.generateEntries(toTrans);
+
+        return new TransferResponse(fromTrans.getTransId(), toTrans.getTransId(),
+                fromBalanceAfter, toBalanceAfter, fromTrans.getStatus());
+    }
+
+    /** 校验转入方账户存在、状态正常、且为活期账户。 */
+    private Account validateToAccount(String cardNo) {
+        Account account = accountMapper.selectByCardNo(cardNo);
+        if (account == null) {
+            throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND, "转入方账户不存在");
+        }
+        if (account.getStatus() != AccountStatus.NORMAL.getCode()) {
+            throw new BusinessException(ResultCode.ACCOUNT_FROZEN, "转入方账户状态异常");
+        }
+        if (!AccountType.DEMAND_DEPOSIT.getCode().equals(account.getAccountType())) {
+            throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "转入方不是活期存款账户");
+        }
+        return account;
+    }
+
     /** 账户等级限额：Ⅱ类单笔≤1万，Ⅲ类单笔≤1000。 */
     private void checkLevelLimit(int accountLevel, BigDecimal amount) {
         if (accountLevel == AccountLevel.LEVEL_II.getCode()
@@ -190,6 +281,23 @@ public class AccountService {
                 && amount.compareTo(new BigDecimal("1000.00")) > 0) {
             throw new BusinessException(ResultCode.ACCOUNT_LEVEL_LIMIT, "Ⅲ类账户单笔交易不得超过1000元");
         }
+    }
+
+    // ==================== 功能6：修改客户信息 ====================
+
+    /**
+     * 修改客户信息 — 对应基线文档 功能6。
+     * 通过卡号+密码鉴权，更新客户联系电话和通讯地址，证件信息不可修改。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long updateCustomer(UpdateCustomerRequest req) {
+        Account account = locateAndAuthAccount(req.getCardNo(), req.getPassword());
+        Customer customer = new Customer();
+        customer.setCustomerId(account.getCustomerId());
+        customer.setPhone(req.getPhone());
+        customer.setAddress(req.getAddress());
+        customerMapper.updateContact(customer);
+        return account.getCustomerId();
     }
 
     // ==================== 公共辅助方法 ====================

@@ -35,4 +35,16 @@ public class AccountController {
     public ApiResult<WithdrawResponse> withdraw(@RequestBody WithdrawRequest request) {
         return ApiResult.success(accountService.withdraw(request));
     }
+
+    @Operation(summary = "转账", description = "行内转账，转出方扣减 + 转入方增加。双流水通过related_trans_id互相关联，两套会计分录在同一事务中完成。")
+    @PostMapping("/transfer")
+    public ApiResult<TransferResponse> transfer(@RequestBody TransferRequest request) {
+        return ApiResult.success(accountService.transfer(request));
+    }
+
+    @Operation(summary = "修改客户信息", description = "通过卡号+密码鉴权后，更新客户的联系电话和通讯地址。证件信息不可修改。")
+    @PutMapping("/customer")
+    public ApiResult<Long> updateCustomer(@RequestBody UpdateCustomerRequest request) {
+        return ApiResult.success(accountService.updateCustomer(request));
+    }
 }
