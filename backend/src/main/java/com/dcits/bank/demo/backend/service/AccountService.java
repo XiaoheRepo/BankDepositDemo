@@ -77,7 +77,7 @@ public class AccountService {
                 BigDecimal.ZERO, BigDecimal.ZERO, req.getChannel(), "SYSTEM");
         transactionMapper.insert(trans);
 
-        accountingService.generateEntries(trans);
+        accountingService.generateEntries(trans, account.getBranchCode());
 
         return new OpenAccountResponse(cardNo, accountNo);
     }
@@ -112,7 +112,7 @@ public class AccountService {
         transactionMapper.insert(trans);
 
         // 5. 会计分录（借1002库存现金 / 贷1001活期存款）
-        accountingService.generateEntries(trans);
+        accountingService.generateEntries(trans, account.getBranchCode());
 
         // 6. 柜面渠道：记录现金入库明细
         if (Channel.COUNTER.getCode().equals(req.getChannel())) {
@@ -166,7 +166,7 @@ public class AccountService {
         transactionMapper.insert(trans);
 
         // 7. 会计分录（借1001活期存款 / 贷1002库存现金）
-        accountingService.generateEntries(trans);
+        accountingService.generateEntries(trans, account.getBranchCode());
 
         // 8. 柜面渠道：记录现金出库明细
         if (Channel.COUNTER.getCode().equals(req.getChannel())) {
@@ -247,10 +247,10 @@ public class AccountService {
 
         // 8. 双套会计分录
         fromTrans.setDcFlag(DcFlag.DEBIT.getCode());  // 转出→借1001贷1002
-        accountingService.generateEntries(fromTrans);
+        accountingService.generateEntries(fromTrans, fromAccount.getBranchCode());
 
         toTrans.setDcFlag(DcFlag.CREDIT.getCode());   // 转入→借1002贷1001
-        accountingService.generateEntries(toTrans);
+        accountingService.generateEntries(toTrans, toAccount.getBranchCode());
 
         return new TransferResponse(fromTrans.getTransId(), toTrans.getTransId(),
                 fromBalanceAfter, fromTrans.getStatus());

@@ -18,10 +18,10 @@ public enum TransType {
             AccountCode.DEMAND_DEPOSIT, AccountCode.CASH_IN_VAULT,
             "活期存款支取",              "现金付出"),
 
-    /** 转账分录由 DcFlag 决定：D(转出)→借1001贷1002，C(转入)→借1002贷1001 */
+    /** 转账分录由 DcFlag 决定：D(转出)→借1001贷1004，C(转入)→借1004贷1001 */
     TRANSFER("03", "转账",
-            AccountCode.DEMAND_DEPOSIT, AccountCode.CASH_IN_VAULT,
-            "活期存款转出",              "内部清算"),
+            AccountCode.DEMAND_DEPOSIT, AccountCode.INTERNAL_CLEARING,
+            "活期存款转出",              "行内清算"),
 
     INTEREST("04", "结息",
             AccountCode.INTEREST_EXPENSE, AccountCode.DEMAND_DEPOSIT,
