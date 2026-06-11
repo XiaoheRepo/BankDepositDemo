@@ -15,7 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 public class AccountService {
@@ -42,8 +45,7 @@ public class AccountService {
         this.accountingService = accountingService;
     }
 
-    // ==================== 功能1：客户开户 ====================
-
+    //  功能1：客户开户
     @Transactional(rollbackFor = Exception.class)
     public OpenAccountResponse openAccount(OpenAccountRequest req) {
         validateOpenAccountRequest(req);
@@ -71,18 +73,17 @@ public class AccountService {
         account.setOpenDate(LocalDate.now());
         accountMapper.insert(account);
 
-        String outTradeNo = "OPEN_" + cardNo + "_" + System.currentTimeMillis();
-        BusinessTransaction trans = buildTransaction(account.getAccountId(), outTradeNo,
+        BusinessTransaction trans = buildTransaction(account.getAccountId(), req.getOutTradeNo(),
                 DcFlag.CREDIT.getCode(), TransType.OPEN_ACCOUNT.getCode(),
-                BigDecimal.ZERO, BigDecimal.ZERO, req.getChannel(), "SYSTEM");
+                BigDecimal.ZERO, BigDecimal.ZERO, req.getChannel(), "SYSTEM", account.getBranchCode());
         transactionMapper.insert(trans);
 
-        accountingService.generateEntries(trans, account.getBranchCode());
+        accountingService.generateEntries(trans);
 
         return new OpenAccountResponse(cardNo, accountNo);
     }
 
-    // ==================== 功能2：存款交易 ====================
+    // 功能2：存款交易
 
     /**
      * 存款交易 — 对应基线文档 功能2。
@@ -91,43 +92,42 @@ public class AccountService {
      */
     @Transactional(rollbackFor = Exception.class)
     public DepositResponse deposit(DepositRequest req) {
+        validateTransactionRequest(req.getOutTradeNo(), req.getCardNo(), req.getPassword(),
+                req.getTransAmount(), req.getChannel());
         // 1. 幂等校验
         BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
         if (existing != null && existing.getStatus().equals(TransStatus.SUCCESS.getCode())) {
-            return new DepositResponse(existing.getTransId(), existing.getBalanceAfter(), existing.getStatus());
+            return new DepositResponse(existing.getTransNo(), existing.getBalanceAfter(), existing.getStatus());
         }
 
         // 2. 账户定位 + 验密 + 状态检查
         Account account = locateAndAuthAccount(req.getCardNo(), req.getPassword());
 
         // 3. 乐观锁更新余额（余额 + 存款金额），失败重试
-        BigDecimal balanceAfter = updateBalanceWithRetry(account.getAccountId(),
-                account.getBalance().add(req.getTransAmount()), account.getVersion());
+        BigDecimal balanceAfter = updateBalanceWithRetry(account.getAccountId(), req.getTransAmount());
 
         // 4. 记录交易流水
         BusinessTransaction trans = buildTransaction(account.getAccountId(), req.getOutTradeNo(),
                 DcFlag.CREDIT.getCode(), TransType.DEPOSIT.getCode(),
-                req.getTransAmount(), balanceAfter, req.getChannel(), req.getOperatorId());
+                req.getTransAmount(), balanceAfter, req.getChannel(), req.getOperatorId(), account.getBranchCode());
         trans.setRemark(req.getRemark());
         transactionMapper.insert(trans);
 
         // 5. 会计分录（借1002库存现金 / 贷1001活期存款）
-        accountingService.generateEntries(trans, account.getBranchCode());
+        accountingService.generateEntries(trans);
 
-        // 6. 柜面渠道：记录现金入库明细
-        if (Channel.COUNTER.getCode().equals(req.getChannel())) {
-            CashTransaction cash = new CashTransaction();
-            cash.setTransId(trans.getTransId());
-            cash.setTellerId(req.getOperatorId());
-            cash.setCashType(CashType.IN.getCode());
-            cash.setAmount(req.getTransAmount());
-            cashTransactionMapper.insert(cash);
-        }
+        // 6. 记录现金入库
+        CashTransaction cashIn = new CashTransaction();
+        cashIn.setTransId(trans.getTransId());
+        cashIn.setTellerId(req.getOperatorId());
+        cashIn.setCashType(CashType.IN.getCode());
+        cashIn.setAmount(req.getTransAmount());
+        cashTransactionMapper.insert(cashIn);
 
-        return new DepositResponse(trans.getTransId(), balanceAfter, trans.getStatus());
+        return new DepositResponse(trans.getTransNo(), balanceAfter, trans.getStatus());
     }
 
-    // ==================== 功能3：取款交易 ====================
+    //  功能3：取款交易
 
     /**
      * 取款交易 — 对应基线文档 功能3。
@@ -136,10 +136,12 @@ public class AccountService {
      */
     @Transactional(rollbackFor = Exception.class)
     public WithdrawResponse withdraw(WithdrawRequest req) {
+        validateTransactionRequest(req.getOutTradeNo(), req.getCardNo(), req.getPassword(),
+                req.getTransAmount(), req.getChannel());
         // 1. 幂等校验
         BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
         if (existing != null && existing.getStatus().equals(TransStatus.SUCCESS.getCode())) {
-            return new WithdrawResponse(existing.getTransId(), existing.getBalanceAfter(), existing.getStatus());
+            return new WithdrawResponse(existing.getTransNo(), existing.getBalanceAfter(), existing.getStatus());
         }
 
         // 2. 账户定位 + 验密 + 状态检查
@@ -155,33 +157,30 @@ public class AccountService {
         checkLevelLimit(account.getAccountLevel(), req.getTransAmount());
 
         // 5. 乐观锁扣减余额
-        BigDecimal balanceAfter = updateBalanceWithRetry(account.getAccountId(),
-                account.getBalance().subtract(req.getTransAmount()), account.getVersion());
+        BigDecimal balanceAfter = updateBalanceWithRetry(account.getAccountId(), req.getTransAmount().negate());
 
         // 6. 记录交易流水（借方）
         BusinessTransaction trans = buildTransaction(account.getAccountId(), req.getOutTradeNo(),
                 DcFlag.DEBIT.getCode(), TransType.WITHDRAW.getCode(),
-                req.getTransAmount(), balanceAfter, req.getChannel(), req.getOperatorId());
+                req.getTransAmount(), balanceAfter, req.getChannel(), req.getOperatorId(), account.getBranchCode());
         trans.setRemark(req.getRemark());
         transactionMapper.insert(trans);
 
         // 7. 会计分录（借1001活期存款 / 贷1002库存现金）
-        accountingService.generateEntries(trans, account.getBranchCode());
+        accountingService.generateEntries(trans);
 
-        // 8. 柜面渠道：记录现金出库明细
-        if (Channel.COUNTER.getCode().equals(req.getChannel())) {
-            CashTransaction cash = new CashTransaction();
-            cash.setTransId(trans.getTransId());
-            cash.setTellerId(req.getOperatorId());
-            cash.setCashType(CashType.OUT.getCode());
-            cash.setAmount(req.getTransAmount());
-            cashTransactionMapper.insert(cash);
-        }
+        // 8. 记录现金出库
+        CashTransaction cashOut = new CashTransaction();
+        cashOut.setTransId(trans.getTransId());
+        cashOut.setTellerId(req.getOperatorId());
+        cashOut.setCashType(CashType.OUT.getCode());
+        cashOut.setAmount(req.getTransAmount());
+        cashTransactionMapper.insert(cashOut);
 
-        return new WithdrawResponse(trans.getTransId(), balanceAfter, trans.getStatus());
+        return new WithdrawResponse(trans.getTransNo(), balanceAfter, trans.getStatus());
     }
 
-    // ==================== 功能4：转账交易 ====================
+    // 功能4：转账交易
 
     /**
      * 转账交易 — 对应基线文档 功能4。
@@ -190,12 +189,15 @@ public class AccountService {
      */
     @Transactional(rollbackFor = Exception.class)
     public TransferResponse transfer(TransferRequest req) {
+        validateTransactionRequest(req.getOutTradeNo(), req.getFromCardNo(), req.getPassword(),
+                req.getTransAmount(), req.getChannel());
+        if (isEmpty(req.getToCardNo())) throw new BusinessException(ResultCode.PARAM_MISSING, "转入方卡号不能为空");
         // 1. 幂等校验：同一outTradeNo可能已有转出流水，直接查
         BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
         if (existing != null && existing.getStatus().equals(TransStatus.SUCCESS.getCode())) {
             // 查找关联的转入流水
             BusinessTransaction related = transactionMapper.selectById(existing.getRelatedTransId());
-            return new TransferResponse(existing.getTransId(), related != null ? related.getTransId() : null,
+            return new TransferResponse(existing.getTransNo(), related != null ? related.getTransNo() : null,
                     existing.getBalanceAfter(), existing.getStatus());
         }
 
@@ -217,18 +219,15 @@ public class AccountService {
         checkLevelLimit(fromAccount.getAccountLevel(), req.getTransAmount());
 
         // 5. 乐观锁：转出方扣减
-        BigDecimal fromBalanceAfter = updateBalanceWithRetry(fromAccount.getAccountId(),
-                fromAccount.getBalance().subtract(req.getTransAmount()), fromAccount.getVersion());
+        BigDecimal fromBalanceAfter = updateBalanceWithRetry(fromAccount.getAccountId(), req.getTransAmount().negate());
 
-        // 6. 乐观锁：转入方增加（重新读取最新版本号）
-        Account toLatest = accountMapper.selectById(toAccount.getAccountId());
-        BigDecimal toBalanceAfter = updateBalanceWithRetry(toAccount.getAccountId(),
-                toLatest.getBalance().add(req.getTransAmount()), toLatest.getVersion());
+        // 6. 乐观锁：转入方增加
+        BigDecimal toBalanceAfter = updateBalanceWithRetry(toAccount.getAccountId(), req.getTransAmount());
 
         // 7. 双流水记录（先插入转出，再插入转入，最后互相更新 related_trans_id）
         BusinessTransaction fromTrans = buildTransaction(fromAccount.getAccountId(), req.getOutTradeNo(),
                 DcFlag.DEBIT.getCode(), TransType.TRANSFER.getCode(),
-                req.getTransAmount(), fromBalanceAfter, req.getChannel(), req.getOperatorId());
+                req.getTransAmount(), fromBalanceAfter, req.getChannel(), req.getOperatorId(), fromAccount.getBranchCode());
         fromTrans.setCounterPartyAccount(req.getToCardNo());
         fromTrans.setRemark(req.getRemark());
         transactionMapper.insert(fromTrans);
@@ -236,7 +235,7 @@ public class AccountService {
         // 转入方幂等号加后缀，避免与转出方的 uk_out_trade_no 冲突
         BusinessTransaction toTrans = buildTransaction(toAccount.getAccountId(), req.getOutTradeNo() + "_TO",
                 DcFlag.CREDIT.getCode(), TransType.TRANSFER.getCode(),
-                req.getTransAmount(), toBalanceAfter, req.getChannel(), req.getOperatorId());
+                req.getTransAmount(), toBalanceAfter, req.getChannel(), req.getOperatorId(), toAccount.getBranchCode());
         toTrans.setCounterPartyAccount(req.getFromCardNo());
         toTrans.setRelatedTransId(fromTrans.getTransId());
         toTrans.setRemark(req.getRemark());
@@ -245,14 +244,11 @@ public class AccountService {
         // 互相绑定
         transactionMapper.updateRelatedTransId(fromTrans.getTransId(), toTrans.getTransId());
 
-        // 8. 双套会计分录
-        fromTrans.setDcFlag(DcFlag.DEBIT.getCode());  // 转出→借1001贷1002
-        accountingService.generateEntries(fromTrans, fromAccount.getBranchCode());
+        // 8. 双套会计分录（dcFlag 在 buildTransaction 时已设置，无需再设）
+        accountingService.generateEntries(fromTrans);
+        accountingService.generateEntries(toTrans);
 
-        toTrans.setDcFlag(DcFlag.CREDIT.getCode());   // 转入→借1002贷1001
-        accountingService.generateEntries(toTrans, toAccount.getBranchCode());
-
-        return new TransferResponse(fromTrans.getTransId(), toTrans.getTransId(),
+        return new TransferResponse(fromTrans.getTransNo(), toTrans.getTransNo(),
                 fromBalanceAfter, fromTrans.getStatus());
     }
 
@@ -283,7 +279,7 @@ public class AccountService {
         }
     }
 
-    // ==================== 功能6：修改客户信息 ====================
+    // 功能6：修改客户信息 
 
     /**
      * 修改客户信息 — 对应基线文档 功能6。
@@ -291,6 +287,10 @@ public class AccountService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long updateCustomer(UpdateCustomerRequest req) {
+        if (isEmpty(req.getCardNo())) throw new BusinessException(ResultCode.PARAM_MISSING, "卡号不能为空");
+        if (isEmpty(req.getPassword())) throw new BusinessException(ResultCode.PARAM_MISSING, "密码不能为空");
+        if (isEmpty(req.getPhone()) && isEmpty(req.getAddress()))
+            throw new BusinessException(ResultCode.PARAM_MISSING, "至少需要修改一项（电话或地址）");
         Account account = locateAndAuthAccount(req.getCardNo(), req.getPassword());
         Customer customer = new Customer();
         customer.setCustomerId(account.getCustomerId());
@@ -300,7 +300,7 @@ public class AccountService {
         return account.getCustomerId();
     }
 
-    // ==================== 功能8：交易流水查询 ====================
+    // 功能8：交易流水查询 
 
     /**
      * 交易流水查询 — 对应基线文档 功能8。
@@ -349,15 +349,31 @@ public class AccountService {
      * 乐观锁更新余额，并发冲突时重试（最多 {@link #MAX_RETRY} 次）。
      * 每次重试重新读取最新的 account 版本号。
      */
-    private BigDecimal updateBalanceWithRetry(Long accountId, BigDecimal newBalance, int currentVersion) {
+    /**
+     * 乐观锁更新余额（增量版）。
+     * 每次重试都重新读取最新余额和版本号，避免基于过期余额计算导致"丢钱"。
+     * @param delta 资金变动量：存款/转入为正，取款/转出为负
+     */
+    /**
+     * 乐观锁更新余额（增量版）。
+     * 每次重试都重新读取最新余额和版本号，delta 为负时每轮校验可用余额。
+     * @param delta 资金变动量：存款/转入为正，取款/转出为负
+     */
+    private BigDecimal updateBalanceWithRetry(Long accountId, BigDecimal delta) {
         for (int i = 0; i < MAX_RETRY; i++) {
-            int affected = accountMapper.updateBalanceWithVersion(accountId, newBalance, currentVersion);
+            Account latest = accountMapper.selectById(accountId);
+            // 取款/转出时每轮重算可用余额，防止 TOCTOU 导致余额变负
+            if (delta.signum() < 0) {
+                BigDecimal available = latest.getBalance().subtract(latest.getFrozenAmount());
+                if (available.compareTo(delta.abs()) < 0) {
+                    throw new BusinessException(ResultCode.BALANCE_INSUFFICIENT);
+                }
+            }
+            BigDecimal newBalance = latest.getBalance().add(delta);
+            int affected = accountMapper.updateBalanceWithVersion(accountId, newBalance, latest.getVersion());
             if (affected > 0) {
                 return newBalance;
             }
-            // 并发冲突：重新读取最新版本号再试
-            Account latest = accountMapper.selectById(accountId);
-            currentVersion = latest.getVersion();
         }
         throw new BusinessException(ResultCode.CONCURRENT_CONFLICT);
     }
@@ -383,12 +399,14 @@ public class AccountService {
     }
 
     /** 构建交易流水对象（公共字段填充）。 */
+    /** 构建交易流水对象，自动生成业务交易流水号。 */
     private BusinessTransaction buildTransaction(Long accountId, String outTradeNo,
                                                   String dcFlag, String transType,
                                                   BigDecimal amount, BigDecimal balanceAfter,
-                                                  String channel, String operatorId) {
+                                                  String channel, String operatorId, String branchCode) {
         BusinessTransaction trans = new BusinessTransaction();
         trans.setAccountId(accountId);
+        trans.setTransNo(generateTransNo(branchCode, transType));
         trans.setOutTradeNo(outTradeNo);
         trans.setDcFlag(dcFlag);
         trans.setTransType(transType);
@@ -399,6 +417,18 @@ public class AccountService {
         trans.setTransTime(LocalDateTime.now());
         trans.setStatus(TransStatus.SUCCESS.getCode());
         return trans;
+    }
+
+    /**
+     * 生成业务交易流水号：机构号(6) + 日期(8) + 交易类型(2) + 时分秒(6) + 纳秒末4位 + 随机码(2)
+     * 纳秒粒度保证同秒内几乎不可能碰撞。
+     */
+    private String generateTransNo(String branchCode, String transType) {
+        String datePart = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String timePart = LocalTime.now().format(DateTimeFormatter.ofPattern("HHmmss"));
+        String nanoPart = String.format("%04d", System.nanoTime() % 10000);
+        String seq = String.format("%02d", ThreadLocalRandom.current().nextInt(100));
+        return branchCode + datePart + transType + timePart + nanoPart + seq;
     }
 
     // ==================== 开户辅助方法 ====================
@@ -443,7 +473,19 @@ public class AccountService {
         if (isEmpty(req.getPhone())) throw new BusinessException(ResultCode.PARAM_MISSING, "联系电话不能为空");
         if (isEmpty(req.getAddress())) throw new BusinessException(ResultCode.PARAM_MISSING, "通讯地址不能为空");
         if (isEmpty(req.getBranchCode())) throw new BusinessException(ResultCode.PARAM_MISSING, "开户行代码不能为空");
+        if (isEmpty(req.getOutTradeNo())) throw new BusinessException(ResultCode.PARAM_MISSING, "幂等号不能为空");
         if (isEmpty(req.getChannel())) throw new BusinessException(ResultCode.PARAM_MISSING, "开户渠道不能为空");
+    }
+
+    /** 交易公共参数校验 */
+    private void validateTransactionRequest(String outTradeNo, String cardNo, String password,
+                                             BigDecimal amount, String channel) {
+        if (isEmpty(outTradeNo)) throw new BusinessException(ResultCode.PARAM_MISSING, "幂等号不能为空");
+        if (isEmpty(cardNo)) throw new BusinessException(ResultCode.PARAM_MISSING, "卡号不能为空");
+        if (isEmpty(password)) throw new BusinessException(ResultCode.PARAM_MISSING, "密码不能为空");
+        if (isEmpty(channel)) throw new BusinessException(ResultCode.PARAM_MISSING, "交易渠道不能为空");
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0)
+            throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "交易金额必须大于0");
     }
 
     private boolean isEmpty(String s) {

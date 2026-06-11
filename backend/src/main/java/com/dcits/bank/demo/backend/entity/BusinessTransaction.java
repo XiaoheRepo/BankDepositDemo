@@ -10,8 +10,11 @@ import java.time.LocalDateTime;
 @Data
 public class BusinessTransaction {
 
-    /** 内部交易流水号（自增主键） */
+    /** 内部交易流水号（自增主键，仅内部关联用） */
     private Long transId;
+
+    /** 交易流水号（业务编号，唯一索引 uk_trans_no） */
+    private String transNo;
 
     /** 外部请求幂等号（唯一索引 uk_out_trade_no，防重复提交） */
     private String outTradeNo;

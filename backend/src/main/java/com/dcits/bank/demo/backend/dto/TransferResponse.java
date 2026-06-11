@@ -6,19 +6,16 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 
-/**
- * 转账响应 — 对应基线文档 功能4 输出要素。
- */
 @Data
 @AllArgsConstructor
 @Schema(description = "转账响应")
 public class TransferResponse {
 
     @Schema(description = "转出方交易流水号")
-    private Long fromTransId;
+    private String fromTransNo;
 
     @Schema(description = "转入方交易流水号")
-    private Long toTransId;
+    private String toTransNo;
 
     @Schema(description = "转出方交易后余额")
     private BigDecimal fromBalanceAfter;

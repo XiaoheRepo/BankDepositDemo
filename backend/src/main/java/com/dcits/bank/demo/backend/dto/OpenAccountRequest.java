@@ -38,6 +38,9 @@ public class OpenAccountRequest {
     @Schema(description = "开户行代码", example = "010001")
     private String branchCode;
 
+    @Schema(description = "外部请求幂等号，最长64字符", example = "OPEN20260611001")
+    private String outTradeNo;
+
     @Schema(description = "开户渠道（APP/COUNTER/ATM）", example = "APP")
     private String channel;
 }

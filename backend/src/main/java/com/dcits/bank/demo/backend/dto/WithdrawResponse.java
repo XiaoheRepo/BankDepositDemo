@@ -6,16 +6,13 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 
-/**
- * 取款响应 — 对应基线文档 功能3 输出要素。
- */
 @Data
 @AllArgsConstructor
 @Schema(description = "取款响应")
 public class WithdrawResponse {
 
-    @Schema(description = "内部交易流水号")
-    private Long transId;
+    @Schema(description = "交易流水号（业务编号）", example = "010001202606110200143005456")
+    private String transNo;
 
     @Schema(description = "取款后账户总余额")
     private BigDecimal balanceAfter;
