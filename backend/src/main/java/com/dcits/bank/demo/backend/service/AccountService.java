@@ -63,19 +63,19 @@ public class AccountService {
         account.setCardNo(cardNo);
         account.setPasswordHash(passwordHash);
         account.setCustomerId(customerId);
-        account.setAccountType(AccountType.DEMAND_DEPOSIT.getCode());
+        account.setAccountType(AccountEnums.Type.DEMAND_DEPOSIT.getCode());
         account.setAccountLevel(req.getAccountLevel() != null ? req.getAccountLevel() : 1);
         account.setCurrency(currency);
         account.setBranchCode(req.getBranchCode());
         account.setBalance(BigDecimal.ZERO);
         account.setFrozenAmount(BigDecimal.ZERO);
-        account.setStatus(AccountStatus.NORMAL.getCode());
+        account.setStatus(AccountEnums.Status.NORMAL.getCode());
         account.setVersion(0);
         account.setOpenDate(LocalDate.now());
         accountMapper.insert(account);
 
         BusinessTransaction trans = buildTransaction(account.getAccountId(), req.getOutTradeNo(),
-                DcFlag.CREDIT.getCode(), TransType.OPEN_ACCOUNT.getCode(),
+                TransactionEnums.DcFlag.CREDIT.getCode(), TransType.OPEN_ACCOUNT.getCode(),
                 BigDecimal.ZERO, BigDecimal.ZERO, req.getChannel(), "SYSTEM", account.getBranchCode());
         transactionMapper.insert(trans);
 
@@ -97,7 +97,7 @@ public class AccountService {
                 req.getTransAmount(), req.getChannel());
         // 1. 幂等校验
         BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
-        if (existing != null && existing.getStatus().equals(TransStatus.SUCCESS.getCode())) {
+        if (existing != null && existing.getStatus().equals(TransactionEnums.Status.SUCCESS.getCode())) {
             return new DepositResponse(existing.getTransNo(), existing.getBalanceAfter(), existing.getStatus());
         }
 
@@ -109,7 +109,7 @@ public class AccountService {
 
         // 4. 记录交易流水
         BusinessTransaction trans = buildTransaction(account.getAccountId(), req.getOutTradeNo(),
-                DcFlag.CREDIT.getCode(), TransType.DEPOSIT.getCode(),
+                TransactionEnums.DcFlag.CREDIT.getCode(), TransType.DEPOSIT.getCode(),
                 req.getTransAmount(), balanceAfter, req.getChannel(), req.getOperatorId(), account.getBranchCode());
         trans.setRemark(req.getRemark());
         transactionMapper.insert(trans);
@@ -121,7 +121,7 @@ public class AccountService {
         CashTransaction cashIn = new CashTransaction();
         cashIn.setTransId(trans.getTransId());
         cashIn.setTellerId(req.getOperatorId());
-        cashIn.setCashType(CashType.IN.getCode());
+        cashIn.setCashType(TransactionEnums.CashType.IN.getCode());
         cashIn.setAmount(req.getTransAmount());
         cashTransactionMapper.insert(cashIn);
 
@@ -141,7 +141,7 @@ public class AccountService {
                 req.getTransAmount(), req.getChannel());
         // 1. 幂等校验
         BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
-        if (existing != null && existing.getStatus().equals(TransStatus.SUCCESS.getCode())) {
+        if (existing != null && existing.getStatus().equals(TransactionEnums.Status.SUCCESS.getCode())) {
             return new WithdrawResponse(existing.getTransNo(), existing.getBalanceAfter(), existing.getStatus());
         }
 
@@ -162,7 +162,7 @@ public class AccountService {
 
         // 6. 记录交易流水（借方）
         BusinessTransaction trans = buildTransaction(account.getAccountId(), req.getOutTradeNo(),
-                DcFlag.DEBIT.getCode(), TransType.WITHDRAW.getCode(),
+                TransactionEnums.DcFlag.DEBIT.getCode(), TransType.WITHDRAW.getCode(),
                 req.getTransAmount(), balanceAfter, req.getChannel(), req.getOperatorId(), account.getBranchCode());
         trans.setRemark(req.getRemark());
         transactionMapper.insert(trans);
@@ -174,7 +174,7 @@ public class AccountService {
         CashTransaction cashOut = new CashTransaction();
         cashOut.setTransId(trans.getTransId());
         cashOut.setTellerId(req.getOperatorId());
-        cashOut.setCashType(CashType.OUT.getCode());
+        cashOut.setCashType(TransactionEnums.CashType.OUT.getCode());
         cashOut.setAmount(req.getTransAmount());
         cashTransactionMapper.insert(cashOut);
 
@@ -195,7 +195,7 @@ public class AccountService {
         if (isEmpty(req.getToCardNo())) throw new BusinessException(ResultCode.PARAM_MISSING, "转入方卡号不能为空");
         // 1. 幂等校验：同一outTradeNo可能已有转出流水，直接查
         BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
-        if (existing != null && existing.getStatus().equals(TransStatus.SUCCESS.getCode())) {
+        if (existing != null && existing.getStatus().equals(TransactionEnums.Status.SUCCESS.getCode())) {
             // 查找关联的转入流水
             BusinessTransaction related = transactionMapper.selectById(existing.getRelatedTransId());
             return new TransferResponse(existing.getTransNo(), related != null ? related.getTransNo() : null,
@@ -227,7 +227,7 @@ public class AccountService {
 
         // 7. 双流水记录（先插入转出，再插入转入，最后互相更新 related_trans_id）
         BusinessTransaction fromTrans = buildTransaction(fromAccount.getAccountId(), req.getOutTradeNo(),
-                DcFlag.DEBIT.getCode(), TransType.TRANSFER.getCode(),
+                TransactionEnums.DcFlag.DEBIT.getCode(), TransType.TRANSFER.getCode(),
                 req.getTransAmount(), fromBalanceAfter, req.getChannel(), req.getOperatorId(), fromAccount.getBranchCode());
         fromTrans.setCounterPartyAccount(req.getToCardNo());
         fromTrans.setRemark(req.getRemark());
@@ -235,7 +235,7 @@ public class AccountService {
 
         // 转入方幂等号加后缀，避免与转出方的 uk_out_trade_no 冲突
         BusinessTransaction toTrans = buildTransaction(toAccount.getAccountId(), req.getOutTradeNo() + "_TO",
-                DcFlag.CREDIT.getCode(), TransType.TRANSFER.getCode(),
+                TransactionEnums.DcFlag.CREDIT.getCode(), TransType.TRANSFER.getCode(),
                 req.getTransAmount(), toBalanceAfter, req.getChannel(), req.getOperatorId(), toAccount.getBranchCode());
         toTrans.setCounterPartyAccount(req.getFromCardNo());
         toTrans.setRelatedTransId(fromTrans.getTransId());
@@ -259,10 +259,10 @@ public class AccountService {
         if (account == null) {
             throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND, "转入方账户不存在");
         }
-        if (account.getStatus() != AccountStatus.NORMAL.getCode()) {
+        if (account.getStatus() != AccountEnums.Status.NORMAL.getCode()) {
             throw new BusinessException(ResultCode.ACCOUNT_FROZEN, "转入方账户状态异常");
         }
-        if (!AccountType.DEMAND_DEPOSIT.getCode().equals(account.getAccountType())) {
+        if (!AccountEnums.Type.DEMAND_DEPOSIT.getCode().equals(account.getAccountType())) {
             throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "转入方不是活期存款账户");
         }
         return account;
@@ -270,11 +270,11 @@ public class AccountService {
 
     /** 账户等级限额：Ⅱ类单笔≤1万，Ⅲ类单笔≤1000。 */
     private void checkLevelLimit(int accountLevel, BigDecimal amount) {
-        if (accountLevel == AccountLevel.LEVEL_II.getCode()
+        if (accountLevel == AccountEnums.Level.LEVEL_II.getCode()
                 && amount.compareTo(new BigDecimal("10000.00")) > 0) {
             throw new BusinessException(ResultCode.ACCOUNT_LEVEL_LIMIT, "Ⅱ类账户单笔交易不得超过10000元");
         }
-        if (accountLevel == AccountLevel.LEVEL_III.getCode()
+        if (accountLevel == AccountEnums.Level.LEVEL_III.getCode()
                 && amount.compareTo(new BigDecimal("1000.00")) > 0) {
             throw new BusinessException(ResultCode.ACCOUNT_LEVEL_LIMIT, "Ⅲ类账户单笔交易不得超过1000元");
         }
@@ -397,10 +397,10 @@ public class AccountService {
         if (account == null) {
             throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND);
         }
-        if (account.getStatus() == AccountStatus.FROZEN.getCode()) {
+        if (account.getStatus() == AccountEnums.Status.FROZEN.getCode()) {
             throw new BusinessException(ResultCode.ACCOUNT_FROZEN);
         }
-        if (account.getStatus() == AccountStatus.CLOSED.getCode()) {
+        if (account.getStatus() == AccountEnums.Status.CLOSED.getCode()) {
             throw new BusinessException(ResultCode.ACCOUNT_CLOSED);
         }
         if (!PasswordUtil.matches(rawPassword, account.getPasswordHash())) {
@@ -426,7 +426,7 @@ public class AccountService {
         trans.setChannel(channel);
         trans.setOperatorId(operatorId);
         trans.setTransTime(LocalDateTime.now());
-        trans.setStatus(TransStatus.SUCCESS.getCode());
+        trans.setStatus(TransactionEnums.Status.SUCCESS.getCode());
         return trans;
     }
 
@@ -451,7 +451,7 @@ public class AccountService {
         }
         Customer customer = new Customer();
         customer.setCustomerName(req.getCustomerName());
-        customer.setType(CustomerType.PERSONAL.getCode());
+        customer.setType(CustomerEnums.Type.PERSONAL.getCode());
         customer.setIdType(req.getIdType());
         customer.setIdNumber(req.getIdNumber());
         customer.setPhone(req.getPhone());
@@ -466,7 +466,7 @@ public class AccountService {
         }
 
         customer.setBranch(req.getBranchCode());
-        customer.setStatus(CustomerStatus.NORMAL.getCode());
+        customer.setStatus(CustomerEnums.Status.NORMAL.getCode());
         customerMapper.insert(customer);
         return customer.getCustomerId();
     }

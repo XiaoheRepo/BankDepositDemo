@@ -32,14 +32,14 @@ public class AccountingService {
         // 2. 凭证号 = 交易流水号，两号合一
         String voucherId = trans.getTransNo();
 
-        AccountCode debitCode;
-        AccountCode creditCode;
+        AccountingEnums.AccountCodedebitCode;
+        AccountingEnums.AccountCodecreditCode;
         String debitSummary;
         String creditSummary;
         BigDecimal amount = trans.getTransAmount();
 
         // 3. 转账取转入/转出方向：转出(D)用模板正向，转入(C)交换借贷科目
-        if (tt == TransType.TRANSFER && DcFlag.CREDIT.getCode().equals(trans.getDcFlag())) {
+        if (tt == TransType.TRANSFER && TransactionEnums.DcFlag.CREDIT.getCode().equals(trans.getDcFlag())) {
             // 转入方：借1004行内清算 / 贷1001活期存款
             debitCode = tt.getCreditCode();
             creditCode = tt.getDebitCode();
@@ -55,11 +55,11 @@ public class AccountingService {
 
         // 4. 写入借方分录
         entryMapper.insert(buildEntry(voucherId, trans.getTransId(),
-                debitCode.getCode(), AccountingAction.DEBIT.getCode(), amount, debitSummary));
+                debitCode.getCode(), AccountingEnums.Action.DEBIT.getCode(), amount, debitSummary));
 
         // 5. 写入贷方分录
         entryMapper.insert(buildEntry(voucherId, trans.getTransId(),
-                creditCode.getCode(), AccountingAction.CREDIT.getCode(), amount, creditSummary));
+                creditCode.getCode(), AccountingEnums.Action.CREDIT.getCode(), amount, creditSummary));
     }
 
     /** 组装一条会计分录实体 */

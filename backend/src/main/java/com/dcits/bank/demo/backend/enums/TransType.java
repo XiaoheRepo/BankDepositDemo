@@ -7,39 +7,39 @@ package com.dcits.bank.demo.backend.enums;
 public enum TransType {
 
     OPEN_ACCOUNT("00", "开户",
-            AccountCode.CASH_IN_VAULT,  AccountCode.DEMAND_DEPOSIT,
-            "库存现金",                  "个人活期存款开户"),
+            AccountingEnums.AccountCode.CASH_IN_VAULT,  AccountingEnums.AccountCode.DEMAND_DEPOSIT,
+            "库存现金",                                  "个人活期存款开户"),
 
     DEPOSIT("01", "存款",
-            AccountCode.CASH_IN_VAULT,  AccountCode.DEMAND_DEPOSIT,
-            "现金存入",                  "活期存款入账"),
+            AccountingEnums.AccountCode.CASH_IN_VAULT,  AccountingEnums.AccountCode.DEMAND_DEPOSIT,
+            "现金存入",                                  "活期存款入账"),
 
     WITHDRAW("02", "取款",
-            AccountCode.DEMAND_DEPOSIT, AccountCode.CASH_IN_VAULT,
-            "活期存款支取",              "现金付出"),
+            AccountingEnums.AccountCode.DEMAND_DEPOSIT, AccountingEnums.AccountCode.CASH_IN_VAULT,
+            "活期存款支取",                              "现金付出"),
 
     /** 转账分录由 DcFlag 决定：D(转出)→借1001贷1004，C(转入)→借1004贷1001 */
     TRANSFER("03", "转账",
-            AccountCode.DEMAND_DEPOSIT, AccountCode.INTERNAL_CLEARING,
-            "活期存款转出",              "行内清算"),
+            AccountingEnums.AccountCode.DEMAND_DEPOSIT, AccountingEnums.AccountCode.INTERNAL_CLEARING,
+            "活期存款转出",                              "行内清算"),
 
     INTEREST("04", "结息",
-            AccountCode.INTEREST_EXPENSE, AccountCode.DEMAND_DEPOSIT,
-            "利息支出",                   "活期存款结息"),
+            AccountingEnums.AccountCode.INTEREST_EXPENSE, AccountingEnums.AccountCode.DEMAND_DEPOSIT,
+            "利息支出",                                   "活期存款结息"),
 
     CLOSE_ACCOUNT("05", "销户",
-            AccountCode.DEMAND_DEPOSIT, AccountCode.CASH_IN_VAULT,
-            "活期存款销户",              "库存现金");
+            AccountingEnums.AccountCode.DEMAND_DEPOSIT, AccountingEnums.AccountCode.CASH_IN_VAULT,
+            "活期存款销户",                              "库存现金");
 
     private final String code;
     private final String desc;
-    private final AccountCode debitCode;   // 借方科目
-    private final AccountCode creditCode;  // 贷方科目
-    private final String debitSummary;    // 借方摘要
-    private final String creditSummary;   // 贷方摘要
+    private final AccountingEnums.AccountCode debitCode;
+    private final AccountingEnums.AccountCode creditCode;
+    private final String debitSummary;
+    private final String creditSummary;
 
     TransType(String code, String desc,
-              AccountCode debitCode, AccountCode creditCode,
+              AccountingEnums.AccountCode debitCode, AccountingEnums.AccountCode creditCode,
               String debitSummary, String creditSummary) {
         this.code = code;
         this.desc = desc;
@@ -51,8 +51,8 @@ public enum TransType {
 
     public String getCode() { return code; }
     public String getDesc() { return desc; }
-    public AccountCode getDebitCode() { return debitCode; }
-    public AccountCode getCreditCode() { return creditCode; }
+    public AccountingEnums.AccountCode getDebitCode() { return debitCode; }
+    public AccountingEnums.AccountCode getCreditCode() { return creditCode; }
     public String getDebitSummary() { return debitSummary; }
     public String getCreditSummary() { return creditSummary; }
 
