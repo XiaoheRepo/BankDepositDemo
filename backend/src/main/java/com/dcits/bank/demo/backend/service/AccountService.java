@@ -26,16 +26,16 @@ public class AccountService {
     private final CustomerMapper customerMapper;
     private final AccountMapper accountMapper;
     private final BusinessTransactionMapper transactionMapper;
-    private final AccountingEntryMapper entryMapper;
+    private final AccountingService accountingService;
 
     public AccountService(CustomerMapper customerMapper,
                           AccountMapper accountMapper,
                           BusinessTransactionMapper transactionMapper,
-                          AccountingEntryMapper entryMapper) {
+                          AccountingService accountingService) {
         this.customerMapper = customerMapper;
         this.accountMapper = accountMapper;
         this.transactionMapper = transactionMapper;
-        this.entryMapper = entryMapper;
+        this.accountingService = accountingService;
     }
 
     /**
@@ -88,15 +88,8 @@ public class AccountService {
         trans.setStatus(TransStatus.SUCCESS.getCode());
         transactionMapper.insert(trans);
 
-        // 6. 生成会计分录（零金额，仅做开户记账标记）
-        AccountingEntry entry = new AccountingEntry();
-        entry.setVoucherId("VCH" + account.getAccountNo());
-        entry.setTransId(trans.getTransId());
-        entry.setAccountCode("1001"); // 活期存款科目代码，后续由枚举统一管理
-        entry.setAction(AccountingAction.CREDIT.getCode());
-        entry.setAmount(BigDecimal.ZERO);
-        entry.setSummary("个人活期存款开户");
-        entryMapper.insert(entry);
+        // 6. 生成会计分录（一借一贷，复式记账）
+        accountingService.generateEntries(trans);
 
         return new OpenAccountResponse(customerId, account.getAccountId(), cardNo, accountNo);
     }
