@@ -31,10 +31,10 @@ public final class IdCardUtil {
         return CHECK_CODES[sum % 11] == given;
     }
 
-    /** 派生性别，调用前需确保 {@link #isValid} 通过。 */
+    /** 派生性别：第17位奇数→M，偶数→F，调用前需确保 {@link #isValid} 通过。 */
     public static String gender(String idCardNo) {
         int seq = idCardNo.charAt(16) - '0';
-        return (seq % 2 == 1) ? "MALE" : "FEMALE";
+        return (seq % 2 == 1) ? "M" : "F";
     }
 
     /** 派生出生日期。 */

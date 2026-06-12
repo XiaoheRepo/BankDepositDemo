@@ -7,7 +7,7 @@ import lombok.Data;
 import java.math.BigDecimal;
 
 /**
- * 交易明细项 — 对外脱敏后的单条流水记录。
+ * 交易明细项
  */
 @Data
 @AllArgsConstructor
@@ -22,6 +22,9 @@ public class TransactionItem {
 
     @Schema(description = "借贷方向（D-支出，C-收入）")
     private String dcFlag;
+
+    @Schema(description = "对方卡号（转账时有值，其余为空）")
+    private String counterPartyAccount;
 
     @Schema(description = "交易金额绝对值")
     private BigDecimal transAmount;

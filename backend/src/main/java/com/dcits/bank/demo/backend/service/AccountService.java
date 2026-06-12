@@ -348,6 +348,7 @@ public class AccountService {
                 t.getTransTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
                 t.getTransType(),
                 t.getDcFlag(),
+                t.getCounterPartyAccount(),
                 t.getTransAmount(),
                 t.getBalanceAfter(),
                 t.getRemark()
@@ -363,12 +364,12 @@ public class AccountService {
      * 每次重试重新读取最新的 account 版本号。
      */
     /**
-     * 乐观锁更新余额（增量版）。
+     * 乐观锁更新余额。
      * 每次重试都重新读取最新余额和版本号，避免基于过期余额计算导致"丢钱"。
      * @param delta 资金变动量：存款/转入为正，取款/转出为负
      */
     /**
-     * 乐观锁更新余额（增量版）。
+     * 乐观锁更新余额。
      * 每次重试都重新读取最新余额和版本号，delta 为负时每轮校验可用余额。
      * @param delta 资金变动量：存款/转入为正，取款/转出为负
      */
@@ -472,7 +473,7 @@ public class AccountService {
                 throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "身份证号不合法");
             }
             customer.setDateOfBirth(IdCardUtil.birthday(req.getIdNumber()));
-            customer.setGender("MALE".equals(IdCardUtil.gender(req.getIdNumber())) ? "M" : "F");
+            customer.setGender(IdCardUtil.gender(req.getIdNumber()));
         }
 
         customer.setBranch(req.getBranchCode());
