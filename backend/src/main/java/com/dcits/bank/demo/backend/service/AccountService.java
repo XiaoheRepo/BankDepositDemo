@@ -46,6 +46,7 @@ public class AccountService {
         this.transactionMapper = transactionMapper;
         this.cashTransactionMapper = cashTransactionMapper;
         this.accountingService = accountingService;
+        this.interestService = interestService;
     }
 
     //  功能1：客户开户
