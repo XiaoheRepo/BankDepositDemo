@@ -18,7 +18,7 @@ public class AccountInfoResponse {
     @Schema(description = "核心内部账号")
     private String accountNo;
 
-    @Schema(description = "客户姓名（脱敏）")
+    @Schema(description = "客户姓名（脱敏）", example = "张**")
     private String customerName;
 
     @Schema(description = "账户类型")
@@ -33,7 +33,7 @@ public class AccountInfoResponse {
     @Schema(description = "开户行代码")
     private String branchCode;
 
-    @Schema(description = "当前余额")
+    @Schema(description = "当前总余额")
     private BigDecimal balance;
 
     @Schema(description = "冻结金额")
@@ -42,7 +42,7 @@ public class AccountInfoResponse {
     @Schema(description = "可用余额")
     private BigDecimal availableBalance;
 
-    @Schema(description = "账户状态")
+    @Schema(description = "账户状态（0-正常，1-冻结，2-销户）")
     private Integer status;
 
     @Schema(description = "开户日期")
