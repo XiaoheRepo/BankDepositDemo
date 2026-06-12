@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -33,19 +34,26 @@ public class AccountService {
     private final BusinessTransactionMapper transactionMapper;
     private final CashTransactionMapper cashTransactionMapper;
     private final AccountingService accountingService;
-    private final InterestService interestService;
+    private final DailyBalanceMapper dailyBalanceMapper;
+    private final InterestRateConfigMapper interestRateConfigMapper;
+    private final InterestSettlementMapper interestSettlementMapper;
 
     public AccountService(CustomerMapper customerMapper,
                           AccountMapper accountMapper,
                           BusinessTransactionMapper transactionMapper,
                           CashTransactionMapper cashTransactionMapper,
                           AccountingService accountingService,
-                          InterestService interestService) {
+                          DailyBalanceMapper dailyBalanceMapper,
+                          InterestRateConfigMapper interestRateConfigMapper,
+                          InterestSettlementMapper interestSettlementMapper) {
         this.customerMapper = customerMapper;
         this.accountMapper = accountMapper;
         this.transactionMapper = transactionMapper;
         this.cashTransactionMapper = cashTransactionMapper;
         this.accountingService = accountingService;
+        this.dailyBalanceMapper = dailyBalanceMapper;
+        this.interestRateConfigMapper = interestRateConfigMapper;
+        this.interestSettlementMapper = interestSettlementMapper;
     }
 
     //  功能1：客户开户
@@ -456,7 +464,7 @@ public class AccountService {
         }
 
         // 4. 销户前强制结息，将未结利息计入余额
-        interestService.settleInterest(account.getAccountId());
+        settleInterestForClose(account);
         account = accountMapper.selectById(account.getAccountId());
 
         // 5. 若余额>0，先强制取款全部余额（记录流水+分录），乐观锁扣到0
@@ -497,6 +505,71 @@ public class AccountService {
 
         return new CloseAccountResponse(account.getAccountNo(), account.getCardNo(),
                 toClose.getCloseDate(), toClose.getStatus());
+    }
+
+    /**
+     * 销户前结息：计算截止到昨天的未结利息并派发到余额，无积数则跳过。
+     */
+    private void settleInterestForClose(Account account) {
+        // 计息区间
+        LocalDate startDate = account.getLastSettlementDate() != null
+                ? account.getLastSettlementDate().plusDays(1)
+                : account.getOpenDate().plusDays(1);
+        LocalDate endDate = LocalDate.now().minusDays(1);
+        if (startDate.isAfter(endDate)) return;
+
+        // 积数和
+        BigDecimal accumulated = dailyBalanceMapper.sumBalanceByAccountAndDateRange(
+                account.getAccountId(), startDate, endDate);
+        if (accumulated == null || accumulated.compareTo(BigDecimal.ZERO) == 0) return;
+
+        // 日利率
+        InterestRateConfig rateConfig = interestRateConfigMapper.selectActiveRate(
+                account.getAccountType(), account.getCurrency(), LocalDate.now());
+        if (rateConfig == null) return;
+
+        // 利息 = 积数和 × 日利率，向下取整2位
+        BigDecimal interest = accumulated.multiply(rateConfig.getRateValue())
+                .setScale(2, RoundingMode.FLOOR);
+        if (interest.compareTo(BigDecimal.ZERO) == 0) return;
+
+        // 乐观锁加利息 + 更新结算日
+        updateBalanceAndSettlementWithRetry(account.getAccountId(), interest);
+
+        // 重新读取最新余额
+        Account latest = accountMapper.selectById(account.getAccountId());
+
+        // 交易流水
+        BusinessTransaction trans = buildTransaction(account.getAccountId(),
+                "INT_CLOSE_" + account.getAccountId() + "_" + System.currentTimeMillis(),
+                TransactionEnums.DcFlag.CREDIT.getCode(), TransType.INTEREST.getCode(),
+                interest, latest.getBalance(), "SYSTEM", "SYSTEM", account.getBranchCode());
+        trans.setRemark("销户前强制结息");
+        transactionMapper.insert(trans);
+        accountingService.generateEntries(trans);
+
+        // 结息审计记录
+        InterestSettlement settlement = new InterestSettlement();
+        settlement.setAccountId(account.getAccountId());
+        settlement.setSettlementDate(LocalDate.now());
+        settlement.setAccumulatedAmount(accumulated);
+        settlement.setAppliedRate(rateConfig.getRateValue());
+        settlement.setInterestDays((int) ChronoUnit.DAYS.between(startDate, endDate) + 1);
+        settlement.setInterestAmount(interest);
+        settlement.setTransId(trans.getTransId());
+        interestSettlementMapper.insert(settlement);
+    }
+
+    /** 乐观锁更新余额 + 结息日期（销户前结息专用） */
+    private void updateBalanceAndSettlementWithRetry(Long accountId, BigDecimal delta) {
+        for (int i = 0; i < MAX_RETRY; i++) {
+            Account latest = accountMapper.selectById(accountId);
+            latest.setBalance(latest.getBalance().add(delta));
+            latest.setLastSettlementDate(LocalDate.now());
+            int affected = accountMapper.updateBalanceAndSettlementDateWithVersion(latest);
+            if (affected > 0) return;
+        }
+        throw new BusinessException(ResultCode.CONCURRENT_CONFLICT);
     }
 
     // ==================== 公共辅助方法 ====================
