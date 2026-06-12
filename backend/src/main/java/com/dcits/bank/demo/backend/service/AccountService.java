@@ -11,6 +11,7 @@ import com.dcits.bank.demo.backend.util.LuhnUtil;
 import com.dcits.bank.demo.backend.util.PasswordUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +42,7 @@ public class AccountService {
     private final AccountingService accountingService;
     private final InterestRateConfigMapper interestRateConfigMapper;
     private final InterestSettlementMapper interestSettlementMapper;
+    @Lazy private final AccountService self;
 
     public AccountService(CustomerMapper customerMapper,
                           AccountMapper accountMapper,
@@ -49,7 +51,8 @@ public class AccountService {
                           AccountingService accountingService,
                           DailyBalanceMapper dailyBalanceMapper,
                           InterestRateConfigMapper interestRateConfigMapper,
-                          InterestSettlementMapper interestSettlementMapper) {
+                          InterestSettlementMapper interestSettlementMapper,
+                          @Lazy AccountService self) {
         this.customerMapper = customerMapper;
         this.accountMapper = accountMapper;
         this.transactionMapper = transactionMapper;
@@ -58,6 +61,7 @@ public class AccountService {
         this.dailyBalanceMapper = dailyBalanceMapper;
         this.interestRateConfigMapper = interestRateConfigMapper;
         this.interestSettlementMapper = interestSettlementMapper;
+        this.self = self;
     }
 
     //  功能1：客户开户
@@ -676,7 +680,7 @@ public class AccountService {
         Map<Long, String> result = new LinkedHashMap<>();
         for (Account acc : accounts) {
             try {
-                InterestSettlementDTO dto = settleInterestSelf(acc.getAccountId());
+                InterestSettlementDTO dto = self.settleInterestSelf(acc.getAccountId());
                 result.put(acc.getAccountId(), dto != null ? "SUCCESS: " + dto.getInterestAmount() + "元" : "无需结息");
             } catch (Exception e) {
                 result.put(acc.getAccountId(), "FAILED: " + (e instanceof BusinessException ? e.getMessage() : "系统错误"));
