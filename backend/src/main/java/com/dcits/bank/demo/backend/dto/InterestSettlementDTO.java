@@ -15,11 +15,11 @@ import java.time.LocalDate;
 @Schema(description = "结息响应")
 public class InterestSettlementDTO {
 
-    @Schema(description = "结息记录ID")
-    private Long settlementId;
-
     @Schema(description = "结息日期")
     private LocalDate settlementDate;
+
+    @Schema(description = "开始计息日期")
+    private LocalDate startDate;
 
     @Schema(description = "积数总和")
     private BigDecimal accumulatedAmount;
@@ -32,7 +32,4 @@ public class InterestSettlementDTO {
 
     @Schema(description = "利息金额")
     private BigDecimal interestAmount;
-
-    @Schema(description = "关联流水ID")
-    private Long transId;
 }

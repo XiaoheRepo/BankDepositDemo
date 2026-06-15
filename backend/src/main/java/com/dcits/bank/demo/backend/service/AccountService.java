@@ -357,9 +357,9 @@ public class AccountService {
         int offset = (pageNum - 1) * pageSize;
 
         // 4. 总数 + 分页数据
-        long total = transactionMapper.countByAccountAndTime(account.getAccountId(), start, end, req.getTransType());
+        long total = transactionMapper.countByAccountAndTime(account.getAccountId(), start, end, req.getTransType(), req.getDcFlag());
         List<BusinessTransaction> list = transactionMapper.selectByAccountAndTimePaged(
-                account.getAccountId(), start, end, req.getTransType(), pageSize, offset);
+                account.getAccountId(), start, end, req.getTransType(), req.getDcFlag(), pageSize, offset);
 
         // 5. 组装并脱敏（不暴露 trans_id、对方账号完整明文等）
         List<TransactionItem> items = list.stream().map(t -> new TransactionItem(
@@ -465,8 +465,16 @@ public class AccountService {
                 if (lastTrans != null) {
                     endBalance = lastTrans.getBalanceAfter();
                 } else {
+                    // 回溯查询之前的日终余额
                     DailyBalance prev = dailyBalanceMapper.selectLatestBefore(acc.getAccountId(), yesterday);
-                    endBalance = prev != null ? prev.getEndBalance() : BigDecimal.ZERO;
+                    if (prev != null) {
+                        endBalance = prev.getEndBalance();
+                    } else {
+                        // 如果没有历史记录，直接从账户表获取当前余额
+                        // 这处理开户后还未生成过日终积数的情况
+                        Account currentAccount = accountMapper.selectById(acc.getAccountId());
+                        endBalance = currentAccount != null ? currentAccount.getBalance() : BigDecimal.ZERO;
+                    }
                 }
                 DailyBalance db = new DailyBalance();
                 db.setAccountId(acc.getAccountId());
@@ -479,6 +487,36 @@ public class AccountService {
             }
         }
         return new DailyBalanceResponse(yesterday, accounts.size(), success, skip);
+    }
+
+    /**
+     * 为指定账户和日期生成日终余额快照
+     */
+    private void generateDailyBalanceForDate(Long accountId, LocalDate balanceDate) {
+        LocalDateTime startOfDate = balanceDate.atStartOfDay();
+        LocalDateTime startOfNextDay = balanceDate.plusDays(1).atStartOfDay();
+        
+        BigDecimal endBalance;
+        BusinessTransaction lastTrans = transactionMapper
+                .selectLastByAccountAndDate(accountId, startOfDate, startOfNextDay);
+        if (lastTrans != null) {
+            endBalance = lastTrans.getBalanceAfter();
+        } else {
+            // 回溯查询之前的日终余额
+            DailyBalance prev = dailyBalanceMapper.selectLatestBefore(accountId, balanceDate);
+            if (prev != null) {
+                endBalance = prev.getEndBalance();
+            } else {
+                // 如果没有历史记录，直接从账户表获取当前余额
+                Account currentAccount = accountMapper.selectById(accountId);
+                endBalance = currentAccount != null ? currentAccount.getBalance() : BigDecimal.ZERO;
+            }
+        }
+        DailyBalance db = new DailyBalance();
+        db.setAccountId(accountId);
+        db.setBalanceDate(balanceDate);
+        db.setEndBalance(endBalance);
+        dailyBalanceMapper.insert(db);
     }
 
     // 功能5：销户
@@ -630,19 +668,38 @@ public class AccountService {
         if (account.getStatus() != AccountEnums.Status.NORMAL.getCode())
             throw new BusinessException(ResultCode.ACCOUNT_FROZEN, "账户状态异常，无法结息");
 
+        // 计息区间：上次结息日开始（包含）到昨天结束（包含）
+        // 算头不算尾：上次结息日当天的利息在上次结息时没算（因为结息日不算），所以这次要算
         LocalDate startDate = account.getLastSettlementDate() != null
-                ? account.getLastSettlementDate().plusDays(1) : account.getOpenDate().plusDays(1);
-        LocalDate endDate = LocalDate.now().minusDays(1);
-        if (startDate.isAfter(endDate)) return null;
+                ? account.getLastSettlementDate()  // 从上次结息日开始（包含）
+                : account.getOpenDate();           // 没有结息过则从开户日开始
+        LocalDate endDate = LocalDate.now().minusDays(1);     // 昨天（结息日不算）
+        
+        // 补充缺失的日终积数（从startDate到endDate）
+        LocalDate currentDate = startDate;
+        while (!currentDate.isAfter(endDate)) {
+            if (dailyBalanceMapper.selectByAccountAndDate(accountId, currentDate) == null) {
+                generateDailyBalanceForDate(accountId, currentDate);
+            }
+            currentDate = currentDate.plusDays(1);
+        }
+        
+        BigDecimal accumulated = BigDecimal.ZERO;
+        if (!startDate.isAfter(endDate)) {
+            accumulated = dailyBalanceMapper.sumBalanceByAccountAndDateRange(accountId, startDate, endDate);
+            if (accumulated == null) accumulated = BigDecimal.ZERO;
+        }
 
-        BigDecimal accumulated = dailyBalanceMapper.sumBalanceByAccountAndDateRange(accountId, startDate, endDate);
-        if (accumulated == null || accumulated.compareTo(BigDecimal.ZERO) == 0) return null;
+        if (accumulated.compareTo(BigDecimal.ZERO) == 0) return null;
 
         InterestRateConfig rateConfig = interestRateConfigMapper.selectActiveRate(
                 account.getAccountType(), account.getCurrency(), LocalDate.now());
         if (rateConfig == null) throw new BusinessException(ResultCode.RATE_NOT_FOUND);
 
-        int interestDays = (int) ChronoUnit.DAYS.between(startDate, endDate) + 1;
+        int interestDays = 0;
+        if (!startDate.isAfter(endDate)) {
+            interestDays = (int) ChronoUnit.DAYS.between(startDate, endDate) + 1;
+        }
         BigDecimal interestAmount = accumulated.multiply(rateConfig.getRateValue())
                 .setScale(2, RoundingMode.FLOOR);
         if (interestAmount.compareTo(BigDecimal.ZERO) == 0) return null;
@@ -668,8 +725,8 @@ public class AccountService {
         settlement.setTransId(trans.getTransId());
         interestSettlementMapper.insert(settlement);
 
-        return new InterestSettlementDTO(settlement.getSettlementId(), settlement.getSettlementDate(),
-                accumulated, rateConfig.getRateValue(), interestDays, interestAmount, trans.getTransId());
+        return new InterestSettlementDTO(settlement.getSettlementDate(), startDate,
+                accumulated, rateConfig.getRateValue(), interestDays, interestAmount);
     }
 
     /**
@@ -689,10 +746,21 @@ public class AccountService {
         return result;
     }
 
-    /** 代理方法，让 settleInterestAll 的每账户调用走独立的 @Transactional */
+    /**
+     * 代理方法，让 settleInterestAll 的每账户调用走独立的 @Transactional
+     */
     @Transactional(rollbackFor = Exception.class)
     public InterestSettlementDTO settleInterestSelf(Long accountId) {
         return settleInterest(accountId);
+    }
+
+    /**
+     * 通过卡号+密码鉴权结息
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public InterestSettlementDTO settleInterestByCard(String cardNo, String password) {
+        Account account = locateAndAuthAccount(cardNo, password);
+        return settleInterest(account.getAccountId());
     }
 
     // ==================== 公共辅助方法 ====================

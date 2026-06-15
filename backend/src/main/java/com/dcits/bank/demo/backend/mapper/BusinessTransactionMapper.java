@@ -67,23 +67,27 @@ public interface BusinessTransactionMapper {
             "SELECT COUNT(*) FROM business_transaction WHERE account_id = #{accountId} " +
             "AND trans_time >= #{startTime} AND trans_time &lt;= #{endTime} " +
             "<if test='transType != null'> AND trans_type = #{transType}</if>" +
+            "<if test='dcFlag != null'> AND dc_flag = #{dcFlag}</if>" +
             "</script>")
     long countByAccountAndTime(@Param("accountId") Long accountId,
                                @Param("startTime") LocalDateTime startTime,
                                @Param("endTime") LocalDateTime endTime,
-                               @Param("transType") String transType);
+                               @Param("transType") String transType,
+                               @Param("dcFlag") String dcFlag);
 
-    /** 分页查询交易明细，支持可选 transType 过滤，按时间倒序 */
+    /** 分页查询交易明细，支持可选 transType 和 dcFlag 过滤，按时间倒序 */
     @Select("<script>" +
             "SELECT * FROM business_transaction WHERE account_id = #{accountId} " +
             "AND trans_time >= #{startTime} AND trans_time &lt;= #{endTime} " +
             "<if test='transType != null'> AND trans_type = #{transType}</if>" +
+            "<if test='dcFlag != null'> AND dc_flag = #{dcFlag}</if>" +
             "ORDER BY trans_time DESC LIMIT #{limit} OFFSET #{offset}" +
             "</script>")
     List<BusinessTransaction> selectByAccountAndTimePaged(@Param("accountId") Long accountId,
                                                           @Param("startTime") LocalDateTime startTime,
                                                           @Param("endTime") LocalDateTime endTime,
                                                           @Param("transType") String transType,
+                                                          @Param("dcFlag") String dcFlag,
                                                           @Param("limit") int limit,
                                                           @Param("offset") int offset);
 }
