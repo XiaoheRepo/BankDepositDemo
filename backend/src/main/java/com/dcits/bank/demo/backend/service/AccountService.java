@@ -162,10 +162,8 @@ public class AccountService {
         validateTransactionRequest(req.getOutTradeNo(), req.getCardNo(), req.getPassword(),
                 req.getTransAmount(), req.getChannel());
         // 1. 幂等校验
-        BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
-        if (existing != null && existing.getStatus().equals(TransactionEnums.Status.SUCCESS.getCode())) {
-            return new WithdrawResponse(existing.getTransNo(), existing.getBalanceAfter(), existing.getStatus());
-        }
+        WithdrawResponse cached = idempotencyService.check(req.getOutTradeNo(), WithdrawResponse.class);
+        if (cached != null) return cached;
 
         // 2. 账户定位 + 验密 + 状态检查
         Account account = locateAndAuthAccount(req.getCardNo(), req.getPassword());

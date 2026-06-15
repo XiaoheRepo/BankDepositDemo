@@ -16,7 +16,7 @@ public class BusinessTransaction {
     /** 交易流水号（业务编号，唯一索引 uk_trans_no） */
     private String transNo;
 
-    /** 外部请求幂等号（唯一索引 uk_out_trade_no，防重复提交） */
+    /** 外部请求幂等号 */
     private String outTradeNo;
 
     /** 关联流水号（转账双边账互绑的纽带） */
