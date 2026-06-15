@@ -208,8 +208,7 @@ public class AccountService {
      */
     @Transactional(rollbackFor = Exception.class)
     public TransferResponse transfer(TransferRequest req) {
-        validateTransactionRequest(req.getOutTradeNo(), req.getFromCardNo(), req.getPassword(),
-                req.getTransAmount(), req.getChannel());
+        validateTransactionRequest(req.getOutTradeNo(), req.getFromCardNo(), req.getPassword(), req.getTransAmount(), req.getChannel());
         if (isEmpty(req.getToCardNo())) throw new BusinessException(ResultCode.PARAM_MISSING, "转入方卡号不能为空");
         // 1. 幂等校验：同一outTradeNo可能已有转出流水，直接查
         BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
@@ -238,12 +237,12 @@ public class AccountService {
         checkLevelLimit(fromAccount.getAccountLevel(), req.getTransAmount());
 
         // 5. 乐观锁：转出方扣减
-        BigDecimal fromBalanceAfter = updateBalanceWithRetry(fromAccount.getAccountId(), req.getTransAmount().negate());
+        BigDecimal fromBalanceAfter = transferDebitWithRetry(fromAccount.getAccountId(), req.getTransAmount());
 
         // 6. 乐观锁：转入方增加
-        BigDecimal toBalanceAfter = updateBalanceWithRetry(toAccount.getAccountId(), req.getTransAmount());
+        BigDecimal toBalanceAfter = transferCreditWithRetry(toAccount.getAccountId(), req.getTransAmount());
 
-        // 7. 双流水记录 — 共用同一个交易流水号，通过 related_trans_id 关联
+        // todo 7. 双流水记录 — 共用同一个交易流水号，通过 related_trans_id 关联
         String transferNo = generateTransNo(fromAccount.getBranchCode(), TransType.TRANSFER.getCode());
 
         BusinessTransaction fromTrans = buildTransaction(transferNo, fromAccount.getAccountId(), req.getOutTradeNo(),
@@ -696,6 +695,59 @@ public class AccountService {
     }
 
     // ==================== 公共辅助方法 ====================
+
+    /**
+     * Transfer-only debit with optimistic retry.
+     * The final SQL condition verifies account status and available balance.
+     */
+    private BigDecimal transferDebitWithRetry(Long accountId, BigDecimal amount) {
+        for (int i = 0; i < MAX_RETRY; i++) {
+            Account latest = accountMapper.selectById(accountId);
+            ensureTransferAccountNormal(latest);
+            BigDecimal available = latest.getBalance().subtract(latest.getFrozenAmount());
+            if (available.compareTo(amount) < 0) {
+                throw new BusinessException(ResultCode.BALANCE_INSUFFICIENT);
+            }
+            int affected = accountMapper.debitAvailableBalanceForTransfer(
+                    accountId, amount, latest.getVersion());
+            if (affected > 0) {
+                return latest.getBalance().subtract(amount);
+            }
+        }
+        throw new BusinessException(ResultCode.CONCURRENT_CONFLICT);
+    }
+
+    /**
+     * Transfer-only credit with optimistic retry.
+     * The final SQL condition verifies that the receiver account is still normal.
+     */
+    private BigDecimal transferCreditWithRetry(Long accountId, BigDecimal amount) {
+        for (int i = 0; i < MAX_RETRY; i++) {
+            Account latest = accountMapper.selectById(accountId);
+            ensureTransferAccountNormal(latest);
+            int affected = accountMapper.creditBalanceForTransfer(
+                    accountId, amount, latest.getVersion());
+            if (affected > 0) {
+                return latest.getBalance().add(amount);
+            }
+        }
+        throw new BusinessException(ResultCode.CONCURRENT_CONFLICT);
+    }
+
+    private void ensureTransferAccountNormal(Account account) {
+        if (account == null) {
+            throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND);
+        }
+        if (account.getStatus() == AccountEnums.Status.FROZEN.getCode()) {
+            throw new BusinessException(ResultCode.ACCOUNT_FROZEN);
+        }
+        if (account.getStatus() == AccountEnums.Status.CLOSED.getCode()) {
+            throw new BusinessException(ResultCode.ACCOUNT_CLOSED);
+        }
+        if (account.getStatus() != AccountEnums.Status.NORMAL.getCode()) {
+            throw new BusinessException(ResultCode.ACCOUNT_FROZEN, "账户状态异常");
+        }
+    }
 
     /**
      * 乐观锁更新余额。
