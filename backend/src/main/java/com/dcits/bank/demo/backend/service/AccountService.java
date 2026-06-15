@@ -208,10 +208,19 @@ public class AccountService {
      */
     @Transactional(rollbackFor = Exception.class)
     public TransferResponse transfer(TransferRequest req) {
-        validateTransactionRequest(req.getOutTradeNo(), req.getFromCardNo(), req.getPassword(), req.getTransAmount(), req.getChannel());
-        if (isEmpty(req.getToCardNo())) throw new BusinessException(ResultCode.PARAM_MISSING, "转入方卡号不能为空");
+        String outTradeNo = req.getOutTradeNo();
+        String fromCardNo = req.getFromCardNo();
+        String toCardNo = req.getToCardNo();
+        String password = req.getPassword();
+        BigDecimal transAmount = req.getTransAmount();
+        String channel = req.getChannel();
+        String operatorId = req.getOperatorId();
+        String remark = req.getRemark();
+
+        validateTransactionRequest(outTradeNo, fromCardNo, password, transAmount, channel);
+        if (isEmpty(toCardNo)) throw new BusinessException(ResultCode.PARAM_MISSING, "转入方卡号不能为空");
         // 1. 幂等校验：同一outTradeNo可能已有转出流水，直接查
-        BusinessTransaction existing = transactionMapper.selectByOutTradeNo(req.getOutTradeNo());
+        BusinessTransaction existing = transactionMapper.selectByOutTradeNo(outTradeNo);
         if (existing != null && existing.getStatus().equals(TransactionEnums.Status.SUCCESS.getCode())) {
             // 查找关联的转入流水
             BusinessTransaction related = transactionMapper.selectById(existing.getRelatedTransId());
@@ -220,10 +229,10 @@ public class AccountService {
         }
 
         // 2. 转出方账户定位 + 验密
-        Account fromAccount = locateAndAuthAccount(req.getFromCardNo(), req.getPassword());
+        Account fromAccount = locateAndAuthAccount(fromCardNo, password);
 
         // 3. 转入方账户校验（需为活期且状态正常）
-        Account toAccount = validateToAccount(req.getToCardNo());
+        Account toAccount = validateToAccount(toCardNo);
 
         if (fromAccount.getAccountId().equals(toAccount.getAccountId())) {
             throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "不能向自己转账");
@@ -231,34 +240,34 @@ public class AccountService {
 
         // 4. 转出方可用余额 + 等级限额
         BigDecimal available = fromAccount.getBalance().subtract(fromAccount.getFrozenAmount());
-        if (available.compareTo(req.getTransAmount()) < 0) {
+        if (available.compareTo(transAmount) < 0) {
             throw new BusinessException(ResultCode.BALANCE_INSUFFICIENT);
         }
-        checkLevelLimit(fromAccount.getAccountLevel(), req.getTransAmount());
+        checkLevelLimit(fromAccount.getAccountLevel(), transAmount);
 
         // 5. 乐观锁：转出方扣减
-        BigDecimal fromBalanceAfter = transferDebitWithRetry(fromAccount.getAccountId(), req.getTransAmount());
+        BigDecimal fromBalanceAfter = transferDebitWithRetry(fromAccount.getAccountId(), transAmount);
 
         // 6. 乐观锁：转入方增加
-        BigDecimal toBalanceAfter = transferCreditWithRetry(toAccount.getAccountId(), req.getTransAmount());
+        BigDecimal toBalanceAfter = transferCreditWithRetry(toAccount.getAccountId(), transAmount);
 
         // todo 7. 双流水记录 — 共用同一个交易流水号，通过 related_trans_id 关联
         String transferNo = generateTransNo(fromAccount.getBranchCode(), TransType.TRANSFER.getCode());
 
-        BusinessTransaction fromTrans = buildTransaction(transferNo, fromAccount.getAccountId(), req.getOutTradeNo(),
+        BusinessTransaction fromTrans = buildTransaction(transferNo, fromAccount.getAccountId(), outTradeNo,
                 TransactionEnums.DcFlag.DEBIT.getCode(), TransType.TRANSFER.getCode(),
-                req.getTransAmount(), fromBalanceAfter, req.getChannel(), req.getOperatorId());
-        fromTrans.setCounterPartyAccount(req.getToCardNo());
-        fromTrans.setRemark(req.getRemark());
+                transAmount, fromBalanceAfter, channel, operatorId);
+        fromTrans.setCounterPartyAccount(toCardNo);
+        fromTrans.setRemark(remark);
         transactionMapper.insert(fromTrans);
 
         // 转入方幂等号加后缀避唯一约束，交易流水号与转出方相同
-        BusinessTransaction toTrans = buildTransaction(transferNo, toAccount.getAccountId(), req.getOutTradeNo() + "_TO",
+        BusinessTransaction toTrans = buildTransaction(transferNo, toAccount.getAccountId(), outTradeNo + "_TO",
                 TransactionEnums.DcFlag.CREDIT.getCode(), TransType.TRANSFER.getCode(),
-                req.getTransAmount(), toBalanceAfter, req.getChannel(), req.getOperatorId());
-        toTrans.setCounterPartyAccount(req.getFromCardNo());
+                transAmount, toBalanceAfter, channel, operatorId);
+        toTrans.setCounterPartyAccount(fromCardNo);
         toTrans.setRelatedTransId(fromTrans.getTransId());
-        toTrans.setRemark(req.getRemark());
+        toTrans.setRemark(remark);
         transactionMapper.insert(toTrans);
 
         // 互相绑定
