@@ -2,6 +2,7 @@ package com.dcits.bank.demo.backend.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+import java.math.BigDecimal;
 
 /**
  * 交易流水查询请求 — 对应基线文档 功能8 输入要素。
@@ -24,6 +25,15 @@ public class TransactionQueryRequest {
 
     @Schema(description = "交易类型（01-存款/02-取款等），不传则查全部")
     private String transType;
+
+    @Schema(description = "收支类型（C-收入/D-支出），不传则查全部")
+    private String dcFlag;
+
+    @Schema(description = "最小金额（自定义金额筛选）")
+    private BigDecimal amountMin;
+
+    @Schema(description = "最大金额（自定义金额筛选）")
+    private BigDecimal amountMax;
 
     @Schema(description = "页码，从1开始", example = "1")
     private Integer pageNum;

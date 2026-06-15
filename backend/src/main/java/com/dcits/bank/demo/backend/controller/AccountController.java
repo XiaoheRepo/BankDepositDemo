@@ -87,6 +87,12 @@ public class AccountController {
         return ApiResult.success(accountService.settleInterest(accountId));
     }
 
+    @Operation(summary = "单账户结息(卡号+密码)", description = "通过卡号+密码鉴权后执行结息。")
+    @PostMapping("/settle")
+    public ApiResult<InterestSettlementDTO> settleInterestByCard(@RequestBody SettleInterestRequest request) {
+        return ApiResult.success(accountService.settleInterestByCard(request.getCardNo(), request.getPassword()));
+    }
+
     @Operation(summary = "全部结息", description = "对所有正常账户逐笔执行结息，每账户独立事务，返回每账户执行结果。")
     @PostMapping("/settle/all")
     public ApiResult<Map<Long, String>> settleInterestAll() {
