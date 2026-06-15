@@ -70,6 +70,7 @@ public class AccountingService {
         entry.setVoucherId(voucherId);
         entry.setTransId(transId);
         entry.setAccountCode(accountCode);
+        entry.setCurrency("CNY");
         entry.setAction(action);      // 1-借，2-贷
         entry.setAmount(amount);
         entry.setSummary(summary);

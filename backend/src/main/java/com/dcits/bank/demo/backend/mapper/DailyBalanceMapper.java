@@ -13,7 +13,7 @@ import java.time.LocalDate;
 public interface DailyBalanceMapper {
 
     /** 新增每日余额快照（唯一约束 uk_account_date 保证每日每账户一条） */
-    @Insert("INSERT INTO daily_balance (account_id, balance_date, end_balance) VALUES (#{accountId}, #{balanceDate}, #{endBalance})")
+    @Insert("INSERT INTO daily_balance (account_id, currency, balance_date, end_balance) VALUES (#{accountId}, #{currency}, #{balanceDate}, #{endBalance})")
     @Options(useGeneratedKeys = true, keyProperty = "dailyBalanceId")
     int insert(DailyBalance dailyBalance);
 

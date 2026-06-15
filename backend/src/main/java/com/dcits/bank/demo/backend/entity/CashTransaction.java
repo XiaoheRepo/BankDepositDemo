@@ -18,12 +18,17 @@ public class CashTransaction {
 
     /** 柜员编号 */
     private String tellerId;
+    private String branchCode;
+    private String boxId;
+    private String currency;
 
     /** 现金类型（I-入库，O-出库） */
     private String cashType;
 
     /** 金额 */
     private BigDecimal amount;
+    private BigDecimal boxBalanceAfter;
+    private Integer status;
 
     /** 备注 */
     private String remark;

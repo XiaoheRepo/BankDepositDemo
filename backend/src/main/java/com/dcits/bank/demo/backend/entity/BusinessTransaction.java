@@ -33,12 +33,14 @@ public class BusinessTransaction {
 
     /** 交易类型（00-开户，01-存款，02-取款，03-转账，04-结息，05-销户） */
     private String transType;
+    private String currency;
 
     /** 交易金额绝对值（CHECK约束 trans_amount >= 0） */
     private BigDecimal transAmount;
 
     /** 交易后总余额 */
     private BigDecimal balanceAfter;
+    private BigDecimal frozenAmountAfter;
 
     /** 交易渠道（APP / COUNTER / ATM / SYSTEM） */
     private String channel;

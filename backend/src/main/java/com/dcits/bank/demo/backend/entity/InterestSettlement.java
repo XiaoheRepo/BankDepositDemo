@@ -16,6 +16,7 @@ public class InterestSettlement {
 
     /** 内部账户ID（关联 account.account_id） */
     private Long accountId;
+    private String currency;
 
     /** 结息执行日期 */
     private LocalDate settlementDate;

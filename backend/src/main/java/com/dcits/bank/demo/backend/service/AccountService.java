@@ -143,6 +143,11 @@ public class AccountService {
         cashIn.setTellerId(req.getOperatorId());
         cashIn.setCashType(TransactionEnums.CashType.IN.getCode());
         cashIn.setAmount(req.getTransAmount());
+        cashIn.setBranchCode(account.getBranchCode());
+        cashIn.setBoxId(account.getBranchCode());
+        cashIn.setCurrency(account.getCurrency());
+        cashIn.setBoxBalanceAfter(BigDecimal.ZERO);
+        cashIn.setStatus(1);
         cashTransactionMapper.insert(cashIn);
 
         DepositResponse resp = new DepositResponse(trans.getTransNo(), balanceAfter, trans.getStatus());
@@ -196,6 +201,11 @@ public class AccountService {
         cashOut.setTellerId(req.getOperatorId());
         cashOut.setCashType(TransactionEnums.CashType.OUT.getCode());
         cashOut.setAmount(req.getTransAmount());
+        cashOut.setBranchCode(account.getBranchCode());
+        cashOut.setBoxId(account.getBranchCode());
+        cashOut.setCurrency(account.getCurrency());
+        cashOut.setBoxBalanceAfter(BigDecimal.ZERO);
+        cashOut.setStatus(1);
         cashTransactionMapper.insert(cashOut);
 
         WithdrawResponse resp = new WithdrawResponse(trans.getTransNo(), balanceAfter, trans.getStatus());
@@ -460,8 +470,6 @@ public class AccountService {
         return name.charAt(0) + "*".repeat(name.length() - 1);
     }
 
-    // 日终余额快照
-
     /**
      * 日终余额快照 — 对所有正常账户做每日余额快照，存入日积数底表。
      * 已存在当日快照的账户自动跳过（幂等），单账户失败不中断整体流程。
@@ -497,6 +505,7 @@ public class AccountService {
                 }
                 DailyBalance db = new DailyBalance();
                 db.setAccountId(acc.getAccountId());
+                db.setCurrency(acc.getCurrency());
                 db.setBalanceDate(yesterday);
                 db.setEndBalance(endBalance);
                 dailyBalanceMapper.insert(db);
@@ -534,8 +543,10 @@ public class AccountService {
                 endBalance = currentAccount != null ? currentAccount.getBalance() : BigDecimal.ZERO;
             }
         }
+        Account acct = accountMapper.selectById(accountId);
         DailyBalance db = new DailyBalance();
         db.setAccountId(accountId);
+        db.setCurrency(acct != null ? acct.getCurrency() : "CNY");
         db.setBalanceDate(balanceDate);
         db.setEndBalance(endBalance);
         dailyBalanceMapper.insert(db);
@@ -667,6 +678,7 @@ public class AccountService {
         // 结息审计记录
         InterestSettlement settlement = new InterestSettlement();
         settlement.setAccountId(account.getAccountId());
+        settlement.setCurrency(account.getCurrency());
         settlement.setSettlementDate(LocalDate.now());
         settlement.setAccumulatedAmount(accumulated);
         settlement.setAppliedRate(rateConfig.getRateValue());
@@ -774,6 +786,7 @@ public class AccountService {
         // 13. 记录结息审计记录
         InterestSettlement settlement = new InterestSettlement();
         settlement.setAccountId(accountId);
+        settlement.setCurrency(account.getCurrency());
         settlement.setSettlementDate(LocalDate.now());
         settlement.setAccumulatedAmount(accumulated);
         settlement.setAppliedRate(rateConfig.getRateValue());
@@ -949,8 +962,10 @@ public class AccountService {
         trans.setOutTradeNo(outTradeNo);
         trans.setDcFlag(dcFlag);
         trans.setTransType(transType);
+        trans.setCurrency("CNY");
         trans.setTransAmount(amount);
         trans.setBalanceAfter(balanceAfter);
+        trans.setFrozenAmountAfter(BigDecimal.ZERO);
         trans.setChannel(channel);
         trans.setOperatorId(operatorId);
         trans.setTransTime(LocalDateTime.now());

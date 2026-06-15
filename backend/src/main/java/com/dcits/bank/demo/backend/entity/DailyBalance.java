@@ -16,6 +16,7 @@ public class DailyBalance {
 
     /** 内部账户ID（关联 account.account_id） */
     private Long accountId;
+    private String currency;
 
     /** 余额所属日期（与account_id组成唯一约束 uk_account_date） */
     private LocalDate balanceDate;

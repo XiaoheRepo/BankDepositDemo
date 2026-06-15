@@ -21,6 +21,7 @@ public class AccountingEntry {
 
     /** 会计科目代码（由 AccountCode 枚举统一定义） */
     private String accountCode;
+    private String currency;
 
     /** 借贷方向（1-借，2-贷） */
     private Integer action;

@@ -10,8 +10,8 @@ import org.apache.ibatis.annotations.*;
 public interface AccountingEntryMapper {
 
     /** 新增一条分录记录（借或贷），返回自增主键 entryId */
-    @Insert("INSERT INTO accounting_entry (voucher_id, trans_id, account_code, action, amount, summary) " +
-            "VALUES (#{voucherId}, #{transId}, #{accountCode}, #{action}, #{amount}, #{summary})")
+    @Insert("INSERT INTO accounting_entry (voucher_id, trans_id, account_code, currency, action, amount, summary) " +
+            "VALUES (#{voucherId}, #{transId}, #{accountCode}, #{currency}, #{action}, #{amount}, #{summary})")
     @Options(useGeneratedKeys = true, keyProperty = "entryId")
     int insert(AccountingEntry entry);
 }
