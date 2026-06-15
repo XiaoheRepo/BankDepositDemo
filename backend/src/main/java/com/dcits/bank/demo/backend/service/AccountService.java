@@ -491,6 +491,9 @@ public class AccountService {
 
     /**
      * 为指定账户和日期生成日终余额快照
+     * <p>用途：结息时若发现某日期缺少日终积数，调用此方法补全</p>
+     * @param accountId 账户ID
+     * @param balanceDate 快照日期
      */
     private void generateDailyBalanceForDate(Long accountId, LocalDate balanceDate) {
         LocalDateTime startOfDate = balanceDate.atStartOfDay();
@@ -615,9 +618,9 @@ public class AccountService {
                 account.getAccountType(), account.getCurrency(), LocalDate.now());
         if (rateConfig == null) return;
 
-        // 利息 = 积数和 × 日利率，向下取整2位
+        // 利息 = 积数和 × 日利率，四舍五入到2位小数
         BigDecimal interest = accumulated.multiply(rateConfig.getRateValue())
-                .setScale(2, RoundingMode.FLOOR);
+                .setScale(2, RoundingMode.HALF_UP);
         if (interest.compareTo(BigDecimal.ZERO) == 0) return;
 
         // 乐观锁加利息 + 更新结算日
@@ -661,21 +664,34 @@ public class AccountService {
 
     // 功能11：结息
 
+    /**
+     * 单账户结息 — 核心结息业务逻辑
+     * <p>结息规则：算头不算尾原则</p>
+     * <p>计息区间：上次结息日（含）到昨天（含）</p>
+     * <p>利息公式：利息 = 积数总和 × 日利率</p>
+     * <p>日利率计算：年利率 ÷ 360（银行惯例）</p>
+     * 
+     * @param accountId 账户ID
+     * @return 结息结果DTO，若无需结息（积数为0或利息为0）则返回null
+     * @throws BusinessException 账户不存在、账户状态异常、未找到适用利率时抛出
+     */
     @Transactional(rollbackFor = Exception.class)
     public InterestSettlementDTO settleInterest(Long accountId) {
+        // 1. 账户状态校验
         Account account = accountMapper.selectById(accountId);
         if (account == null) throw new BusinessException(ResultCode.ACCOUNT_NOT_FOUND);
         if (account.getStatus() != AccountEnums.Status.NORMAL.getCode())
             throw new BusinessException(ResultCode.ACCOUNT_FROZEN, "账户状态异常，无法结息");
 
-        // 计息区间：上次结息日开始（包含）到昨天结束（包含）
-        // 算头不算尾：上次结息日当天的利息在上次结息时没算（因为结息日不算），所以这次要算
+        // 2. 确定计息区间（算头不算尾原则）
+        // 上次结息日当天的利息在上次结息时没算（因为结息日不算），所以这次要算
         LocalDate startDate = account.getLastSettlementDate() != null
                 ? account.getLastSettlementDate()  // 从上次结息日开始（包含）
                 : account.getOpenDate();           // 没有结息过则从开户日开始
-        LocalDate endDate = LocalDate.now().minusDays(1);     // 昨天（结息日不算）
+        LocalDate endDate = LocalDate.now().minusDays(1);     // 昨天（结息日当天不算）
         
-        // 补充缺失的日终积数（从startDate到endDate）
+        // 3. 补充缺失的日终积数（从startDate到endDate）
+        // 确保所有计息日期都有对应的日终余额记录
         LocalDate currentDate = startDate;
         while (!currentDate.isAfter(endDate)) {
             if (dailyBalanceMapper.selectByAccountAndDate(accountId, currentDate) == null) {
@@ -684,37 +700,50 @@ public class AccountService {
             currentDate = currentDate.plusDays(1);
         }
         
+        // 4. 计算积数总和
         BigDecimal accumulated = BigDecimal.ZERO;
         if (!startDate.isAfter(endDate)) {
             accumulated = dailyBalanceMapper.sumBalanceByAccountAndDateRange(accountId, startDate, endDate);
             if (accumulated == null) accumulated = BigDecimal.ZERO;
         }
 
+        // 5. 无积数则无需结息
         if (accumulated.compareTo(BigDecimal.ZERO) == 0) return null;
 
+        // 6. 获取适用利率
         InterestRateConfig rateConfig = interestRateConfigMapper.selectActiveRate(
                 account.getAccountType(), account.getCurrency(), LocalDate.now());
         if (rateConfig == null) throw new BusinessException(ResultCode.RATE_NOT_FOUND);
 
+        // 7. 计算计息天数
         int interestDays = 0;
         if (!startDate.isAfter(endDate)) {
             interestDays = (int) ChronoUnit.DAYS.between(startDate, endDate) + 1;
         }
+        
+        // 8. 计算利息：积数总和 × 日利率，四舍五入到2位小数
         BigDecimal interestAmount = accumulated.multiply(rateConfig.getRateValue())
-                .setScale(2, RoundingMode.FLOOR);
+                .setScale(2, RoundingMode.HALF_UP);
+        
+        // 9. 利息为0则无需结息
         if (interestAmount.compareTo(BigDecimal.ZERO) == 0) return null;
 
+        // 10. 乐观锁更新账户余额 + 更新结息日期
         updateBalanceAndSettlementWithRetry(accountId, interestAmount);
         Account latest = accountMapper.selectById(accountId);
 
+        // 11. 记录交易流水
         BusinessTransaction trans = buildTransaction(accountId,
                 "INT_" + accountId + "_" + System.currentTimeMillis(),
                 TransactionEnums.DcFlag.CREDIT.getCode(), TransType.INTEREST.getCode(),
                 interestAmount, latest.getBalance(), "SYSTEM", "SYSTEM", account.getBranchCode());
         trans.setRemark("活期存款结息");
         transactionMapper.insert(trans);
+        
+        // 12. 生成会计分录
         accountingService.generateEntries(trans);
 
+        // 13. 记录结息审计记录
         InterestSettlement settlement = new InterestSettlement();
         settlement.setAccountId(accountId);
         settlement.setSettlementDate(LocalDate.now());
@@ -725,12 +754,16 @@ public class AccountService {
         settlement.setTransId(trans.getTransId());
         interestSettlementMapper.insert(settlement);
 
+        // 14. 返回结息结果
         return new InterestSettlementDTO(settlement.getSettlementDate(), startDate,
                 accumulated, rateConfig.getRateValue(), interestDays, interestAmount);
     }
 
     /**
-     * 批量结息 — 每账户通过代理走独立事务，单账户失败不中断整体。
+     * 批量结息 — 对所有正常状态账户执行结息
+     * <p>特性：每账户通过代理方法走独立事务，单账户失败不中断整体流程</p>
+     * 
+     * @return 账户ID到结息结果的映射，值为"SUCCESS: X元"或"FAILED: 原因"或"无需结息"
      */
     public Map<Long, String> settleInterestAll() {
         List<Account> accounts = accountMapper.selectAllNormal();
@@ -747,7 +780,11 @@ public class AccountService {
     }
 
     /**
-     * 代理方法，让 settleInterestAll 的每账户调用走独立的 @Transactional
+     * 代理方法 — 用于批量结息时让每账户调用走独立的 @Transactional 事务
+     * <p>因为 Spring AOP 自调用无法触发事务切面，需要通过注入自身代理对象调用</p>
+     * 
+     * @param accountId 账户ID
+     * @return 结息结果DTO
      */
     @Transactional(rollbackFor = Exception.class)
     public InterestSettlementDTO settleInterestSelf(Long accountId) {
@@ -755,7 +792,13 @@ public class AccountService {
     }
 
     /**
-     * 通过卡号+密码鉴权结息
+     * 通过卡号+密码鉴权结息 — 前端调用接口
+     * <p>先通过卡号密码定位并验证账户，再执行结息</p>
+     * 
+     * @param cardNo 银行卡号
+     * @param password 账户密码（明文）
+     * @return 结息结果DTO
+     * @throws BusinessException 卡号不存在、密码错误时抛出
      */
     @Transactional(rollbackFor = Exception.class)
     public InterestSettlementDTO settleInterestByCard(String cardNo, String password) {
