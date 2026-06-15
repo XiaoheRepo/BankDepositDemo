@@ -9,7 +9,6 @@
         SET balance = balance - #{amount},
             version = version + 1
         WHERE account_id = #{accountId}
-          AND version = #{version}
           AND status = 0
           AND balance - frozen_amount &gt;= #{amount}
     </update>
@@ -19,7 +18,6 @@
         SET balance = balance + #{amount},
             version = version + 1
         WHERE account_id = #{accountId}
-          AND version = #{version}
           AND status = 0
     </update>
 

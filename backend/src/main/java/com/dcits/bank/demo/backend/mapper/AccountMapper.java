@@ -40,12 +40,10 @@ public interface AccountMapper {
                                   @Param("version") int version);
 
     int debitAvailableBalanceForTransfer(@Param("accountId") Long accountId,
-                                          @Param("amount") BigDecimal amount,
-                                          @Param("version") int version);
+                                          @Param("amount") BigDecimal amount);
 
     int creditBalanceForTransfer(@Param("accountId") Long accountId,
-                                  @Param("amount") BigDecimal amount,
-                                  @Param("version") int version);
+                                  @Param("amount") BigDecimal amount);
 
     /** 乐观锁更新余额 + 结息日期，用于结息派发 */
     @Update("UPDATE account SET balance = #{balance}, last_settlement_date = #{lastSettlementDate}, " +
