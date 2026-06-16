@@ -21,7 +21,10 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
@@ -33,6 +36,7 @@ public class InterestService {
     private final CashTransactionMapper cashTransactionMapper;
     private final IdempotencyService idempotencyService;
     private final InterestRateConfigMapper interestRateConfigMapper;
+    private final InterestSettlementMapper interestSettlementMapper;
     @Autowired
     public InterestService(
             DailyBalanceMapper dailyBalanceMapper,
@@ -41,7 +45,8 @@ public class InterestService {
             AccountingService accountingService,
             CashTransactionMapper cashTransactionMapper,
             IdempotencyService idempotencyService,
-            InterestRateConfigMapper interestRateConfigMapper
+            InterestRateConfigMapper interestRateConfigMapper,
+            InterestSettlementMapper interestSettlementMapper
     ) {
         this.dailyBalanceMapper = dailyBalanceMapper;
         this.accountMapper = accountMapper;
@@ -50,6 +55,7 @@ public class InterestService {
         this.cashTransactionMapper = cashTransactionMapper;
         this.idempotencyService = idempotencyService;
         this.interestRateConfigMapper = interestRateConfigMapper;
+        this.interestSettlementMapper = interestSettlementMapper;
     }
 
 
@@ -241,7 +247,8 @@ public class InterestService {
      * @return 这段时间的利息总额
      */
     @Transactional(rollbackFor = Exception.class)
-    public BigDecimal calInterest(Long accountId, LocalDate curDate) {
+    public Map<String, BigDecimal> calInterest(Long accountId, LocalDate curDate) {
+        Map<String, BigDecimal> res = new TreeMap<>();
         // 获取利率
         InterestRateConfig interestRateConfig = interestRateConfigMapper.selectByRateId(2L);
         BigDecimal activeRate = interestRateConfig.getRateValue();
@@ -253,11 +260,13 @@ public class InterestService {
         }
 
         // 积分计算利息
-        BigDecimal dayRate =
-                BigDecimal.valueOf(
-                        activeRate.doubleValue() / 360
-                ).setScale(2, RoundingMode.HALF_UP);
-        return interestBase.multiply(dayRate);
+        BigDecimal interest = interestBase.multiply(activeRate);
+
+        res.put("interestBase", interestBase);
+        res.put("activeRate", activeRate);
+        res.put("interest", interest);
+
+        return res;
     }
 
     /**
@@ -298,7 +307,8 @@ public class InterestService {
         }
 
         // 获取时段利息
-        BigDecimal interestAmount = calInterest(account.getAccountId(), LocalDate.now());
+        Map<String, BigDecimal> calResult = calInterest(account.getAccountId(), LocalDate.now());
+        BigDecimal interestAmount = calResult.get("interest");
 
         // 新增流水
         BusinessTransaction trans = new BusinessTransaction();
@@ -339,9 +349,25 @@ public class InterestService {
         idempotencyService.save(req.getOutTradeNo(), resp);
 
         // 更新上次计息时间
+        LocalDate lastSettlementDate = account.getLastSettlementDate();
         account = accountMapper.selectById(account.getAccountId());
         account.setLastSettlementDate(req.getInterestDate());
         accountMapper.updateLastSettlementDate(account);
+
+        // 存储利息记录至 结息审计记录明细表
+        InterestSettlement interestSettlement = new InterestSettlement();
+//        interestSettlement.setSettlementId(null);
+        interestSettlement.setAccountId(account.getAccountId());
+        interestSettlement.setInterestDays((int) ChronoUnit.DAYS.between(lastSettlementDate, req.getInterestDate()));
+        interestSettlement.setInterestAmount(interestAmount);
+        interestSettlement.setCurrency("CNY");
+        interestSettlement.setTransId(trans.getTransId());
+        interestSettlement.setAccumulatedAmount(calResult.get("interestBase"));
+        interestSettlement.setAppliedRate(calResult.get("activeRate"));
+        interestSettlement.setSettlementDate(req.getInterestDate());
+//        interestSettlement.setCreatedTime(null);
+
+        interestSettlementMapper.insert(interestSettlement);
 
 
         return Boolean.TRUE;
