@@ -24,6 +24,6 @@ public class InterestRequest {
     @Schema(description = "交易摘要", example = "现金存入")
     private String remark;
 
-    @Schema(description = "测试用交易时间", example = "现金存入")
+    @Schema(description = "结息日期", example = "2026-06-16")
     private LocalDate interestDate;
 }

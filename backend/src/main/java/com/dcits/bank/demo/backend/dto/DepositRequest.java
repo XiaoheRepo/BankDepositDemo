@@ -34,6 +34,6 @@ public class DepositRequest {
     @Schema(description = "交易摘要", example = "现金存入")
     private String remark;
 
-    @Schema(description = "测试用交易时间", example = "现金存入")
+    @Schema(description = "交易时间（测试用，不传则为当前时间）", example = "2026-06-16T10:30:00")
     private LocalDateTime transTime;
 }

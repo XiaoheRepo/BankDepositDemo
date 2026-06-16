@@ -17,7 +17,7 @@ public class OpenAccountRequest {
     @Schema(description = "证件类型（01-身份证，02-护照，03-军官证）", example = "01")
     private String idType;
 
-    @Schema(description = "证件号码。身份证类型时通过IdCardUtil校验并派生出生日期与性别", example = "110101199001011234", maxLength = 30)
+    @Schema(description = "证件号码。身份证类型时通过IdCardUtil校验并派生出生日期与性别", example = "110101199001011237", maxLength = 30)
     private String idNumber;
 
     @Schema(description = "账户密码（明文传输，后端做不可逆哈希存储）", example = "123456")
