@@ -36,6 +36,7 @@ public class InterestService {
     private final CashTransactionMapper cashTransactionMapper;
     private final IdempotencyService idempotencyService;
     private final InterestRateConfigMapper interestRateConfigMapper;
+    private final InterestSettlementMapper interestSettlementMapper;
     @Autowired
     public InterestService(
             DailyBalanceMapper dailyBalanceMapper,
@@ -44,7 +45,8 @@ public class InterestService {
             AccountingService accountingService,
             CashTransactionMapper cashTransactionMapper,
             IdempotencyService idempotencyService,
-            InterestRateConfigMapper interestRateConfigMapper
+            InterestRateConfigMapper interestRateConfigMapper,
+            InterestSettlementMapper interestSettlementMapper
     ) {
         this.dailyBalanceMapper = dailyBalanceMapper;
         this.accountMapper = accountMapper;
@@ -53,6 +55,7 @@ public class InterestService {
         this.cashTransactionMapper = cashTransactionMapper;
         this.idempotencyService = idempotencyService;
         this.interestRateConfigMapper = interestRateConfigMapper;
+        this.interestSettlementMapper = interestSettlementMapper;
     }
 
 
@@ -363,6 +366,8 @@ public class InterestService {
         interestSettlement.setAppliedRate(calResult.get("activeRate"));
         interestSettlement.setSettlementDate(req.getInterestDate());
 //        interestSettlement.setCreatedTime(null);
+
+        interestSettlementMapper.insert(interestSettlement);
 
 
         return Boolean.TRUE;
