@@ -43,6 +43,7 @@ public class AccountService {
     private final InterestRateConfigMapper interestRateConfigMapper;
     private final InterestSettlementMapper interestSettlementMapper;
     private final IdempotencyService idempotencyService;
+    private final InterestService interestService;
     @Lazy
     private final AccountService self;
 
@@ -55,6 +56,7 @@ public class AccountService {
                           InterestRateConfigMapper interestRateConfigMapper,
                           InterestSettlementMapper interestSettlementMapper,
                           IdempotencyService idempotencyService,
+                          InterestService interestService,
                           @Lazy AccountService self) {
         this.customerMapper = customerMapper;
         this.accountMapper = accountMapper;
@@ -65,6 +67,7 @@ public class AccountService {
         this.interestRateConfigMapper = interestRateConfigMapper;
         this.interestSettlementMapper = interestSettlementMapper;
         this.idempotencyService = idempotencyService;
+        this.interestService = interestService;
         this.self = self;
     }
 
@@ -407,20 +410,32 @@ public class AccountService {
         if (end.isBefore(start)) {
             throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "结束时间不能早于开始时间");
         }
+        // 3. 金额参数校验
+        BigDecimal amountMin = req.getAmountMin();
+        BigDecimal amountMax = req.getAmountMax();
+        if (amountMin != null && amountMin.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "最小金额不能为负数");
+        }
+        if (amountMax != null && amountMax.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "最大金额不能为负数");
+        }
+        if (amountMin != null && amountMax != null && amountMin.compareTo(amountMax) > 0) {
+            throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "最小金额不能大于最大金额");
+        }
 
-        // 3. 分页参数
+        // 4. 分页参数
         int pageNum = req.getPageNum() != null ? req.getPageNum() : 1;
         int pageSize = req.getPageSize() != null ? req.getPageSize() : 10;
         if (pageNum < 1) throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "页码必须大于0");
         if (pageSize < 1 || pageSize > 100) throw new BusinessException(ResultCode.PARAM_FORMAT_ERROR, "每页条数必须在1-100之间");
         int offset = (pageNum - 1) * pageSize;
 
-        // 4. 总数 + 分页数据
+        // 5. 总数 + 分页数据
         long total = transactionMapper.countByAccountAndTime(account.getAccountId(), start, end, req.getTransType(), req.getDcFlag(), req.getAmountMin(), req.getAmountMax());
         List<BusinessTransaction> list = transactionMapper.selectByAccountAndTimePaged(
                 account.getAccountId(), start, end, req.getTransType(), req.getDcFlag(), req.getAmountMin(), req.getAmountMax(), pageSize, offset);
 
-        // 5. 组装并脱敏（不暴露 trans_id、对方账号完整明文等）
+        // 6. 组装并脱敏（不暴露 trans_id、对方账号完整明文等）
         List<TransactionItem> items = list.stream().map(t -> new TransactionItem(
                 t.getTransTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
                 t.getTransType(),
@@ -598,6 +613,9 @@ public class AccountService {
 
         // 2. 账户定位 + 验密 + 状态检查
         Account account = locateAndAuthAccount(req.getCardNo(), req.getPassword());
+        if (account.getStatus() == AccountEnums.Status.FROZEN.getCode()) {
+            throw new BusinessException(ResultCode.FROZEN_AMOUNT_EXISTS);
+        }
         if (account.getStatus() == AccountEnums.Status.CLOSED.getCode()) {
             throw new BusinessException(ResultCode.ACCOUNT_CLOSED);
         }
@@ -608,17 +626,18 @@ public class AccountService {
         }
 
         // 4. 销户前强制结息，将未结利息计入余额
-        settleInterestForClose(account);
+        settleInterestForClose(req);
         account = accountMapper.selectById(account.getAccountId());
 
+        // 获取本息金额
+        BigDecimal payoutAmount = account.getBalance();
         // 5. 若余额>0，先强制取款全部余额（记录流水+分录），乐观锁扣到0
-        if (account.getBalance().compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal balance = account.getBalance();
-            BigDecimal balanceAfter = updateBalanceWithRetry(account.getAccountId(), balance.negate());
+        if (payoutAmount.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal balanceAfter = updateBalanceWithRetry(account.getAccountId(), payoutAmount.negate());
 
             BusinessTransaction withdrawTrans = buildTransaction(account.getAccountId(),
                     TransactionEnums.DcFlag.DEBIT.getCode(),
-                    TransType.WITHDRAW.getCode(), balance, balanceAfter,
+                    TransType.WITHDRAW.getCode(), payoutAmount, balanceAfter,
                     "SYSTEM", "SYSTEM", account.getBranchCode());
             withdrawTrans.setRemark("销户-余额清退");
             transactionMapper.insert(withdrawTrans);
@@ -626,13 +645,13 @@ public class AccountService {
 
             // 现金出库
             recordCash(withdrawTrans.getTransId(), "SYSTEM", TransactionEnums.CashType.OUT.getCode(),
-                    balance, account, "销户-余额清退");
+                    payoutAmount, account, "销户-余额清退");
 
             // 重新获取最新版本号用于下一步状态更新
             account = accountMapper.selectById(account.getAccountId());
         }
 
-        // 5. 乐观锁更新状态为 CLOSED(2)，closeDate=今天
+        // 6. 乐观锁更新状态为 CLOSED(2)，closeDate=今天
         Account toClose = new Account();
         toClose.setAccountId(account.getAccountId());
         toClose.setStatus(AccountEnums.Status.CLOSED.getCode());
@@ -643,7 +662,7 @@ public class AccountService {
             throw new BusinessException(ResultCode.CONCURRENT_CONFLICT);
         }
 
-        // 6. 记录销户交易流水 + 分录
+        // 7. 记录销户交易流水 + 分录
         BusinessTransaction closeTrans = buildTransaction(account.getAccountId(),
                 TransactionEnums.DcFlag.DEBIT.getCode(), TransType.CLOSE_ACCOUNT.getCode(),
                 BigDecimal.ZERO, BigDecimal.ZERO, "SYSTEM", "SYSTEM", account.getBranchCode());
@@ -652,75 +671,26 @@ public class AccountService {
         accountingService.generateEntries(closeTrans);
 
         CloseAccountResponse resp = new CloseAccountResponse(account.getAccountNo(), account.getCardNo(),
-                toClose.getCloseDate(), toClose.getStatus());
+                payoutAmount, toClose.getCloseDate(), toClose.getStatus());
         idempotencyService.save(req.getOutTradeNo(), resp);
         return resp;
     }
 
     /**
-     * 销户前结息：与 settleInterest 对齐，算头不算尾，自动补缺失日积数。
+     * 销户前结息
      */
-    private void settleInterestForClose(Account account) {
-        // 计息区间：从上次结息日（含）到昨天（结息日不算）
-        LocalDate startDate = account.getLastSettlementDate() != null
-                ? account.getLastSettlementDate()
-                : account.getOpenDate();
-        LocalDate endDate = LocalDate.now().minusDays(1);
-        if (startDate.isAfter(endDate)) return;
-
-        // 补缺失的日积数
-        LocalDate current = startDate;
-        while (!current.isAfter(endDate)) {
-            if (dailyBalanceMapper.selectByAccountAndDate(account.getAccountId(), current) == null) {
-                generateDailyBalanceForDate(account.getAccountId(), current);
-            }
-            current = current.plusDays(1);
-        }
-
-        // 积数和
-        BigDecimal accumulated = dailyBalanceMapper.sumBalanceByAccountAndDateRange(
-                account.getAccountId(), startDate, endDate);
-        if (accumulated == null || accumulated.compareTo(BigDecimal.ZERO) == 0) return;
-
-        // 日利率
-        InterestRateConfig rateConfig = interestRateConfigMapper.selectActiveRate(
-                account.getAccountType(), account.getCurrency(), LocalDate.now());
-        if (rateConfig == null) return;
-
-        // 利息 = 积数和 × 日利率，四舍五入到2位小数
-        BigDecimal interest = accumulated.multiply(rateConfig.getRateValue())
-                .setScale(2, RoundingMode.HALF_UP);
-        if (interest.compareTo(BigDecimal.ZERO) == 0) return;
-
-        // 乐观锁加利息 + 更新结算日
-        updateBalanceAndSettlementWithRetry(account.getAccountId(), interest);
-
-        // 重新读取最新余额
-        Account latest = accountMapper.selectById(account.getAccountId());
-
-        // 交易流水
-        BusinessTransaction trans = buildTransaction(account.getAccountId(),
-                TransactionEnums.DcFlag.CREDIT.getCode(), TransType.INTEREST.getCode(),
-                interest, latest.getBalance(), "SYSTEM", "SYSTEM", account.getBranchCode());
-        trans.setRemark("销户前强制结息");
-        transactionMapper.insert(trans);
-        accountingService.generateEntries(trans);
-
-        // 结息审计记录
-        InterestSettlement settlement = new InterestSettlement();
-        settlement.setAccountId(account.getAccountId());
-        settlement.setCurrency(account.getCurrency());
-        settlement.setSettlementDate(LocalDate.now());
-        settlement.setAccumulatedAmount(accumulated);
-        settlement.setAppliedRate(rateConfig.getRateValue());
-        settlement.setInterestDays((int) ChronoUnit.DAYS.between(startDate, endDate) + 1);
-        settlement.setInterestAmount(interest);
-        settlement.setTransId(trans.getTransId());
-        interestSettlementMapper.insert(settlement);
+    private void settleInterestForClose(CloseAccountRequest req) {
+        InterestRequest interestRequest = new InterestRequest();
+        interestRequest.setCardNo(req.getCardNo());
+        interestRequest.setPassword(req.getPassword());
+        interestRequest.setOutTradeNo(req.getOutTradeNo());
+        interestRequest.setInterestDate(LocalDate.now());
+        interestRequest.setRemark("销户前结息");
+        interestService.interest(interestRequest);
     }
 
     /**
-     * 乐观锁更新余额 + 结息日期（销户前结息专用）
+     * 乐观锁更新余额 + 结息日期
      */
     private void updateBalanceAndSettlementWithRetry(Long accountId, BigDecimal delta) {
         for (int i = 0; i < MAX_RETRY; i++) {

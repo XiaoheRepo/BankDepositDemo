@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Data
@@ -16,6 +17,9 @@ public class CloseAccountResponse {
 
     @Schema(description = "银行卡号")
     private String cardNo;
+
+    @Schema(description = "销户本息总额")
+    private BigDecimal payoutAmount;
 
     @Schema(description = "销户日期")
     private LocalDate closeDate;

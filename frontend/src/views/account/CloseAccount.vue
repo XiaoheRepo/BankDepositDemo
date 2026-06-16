@@ -59,7 +59,8 @@
           <div class="rd-table">
             <div class="rd-row"><span>核心内部账号</span><strong>{{ result.accountNo }}</strong></div>
             <div class="rd-row"><span>银行卡号</span><strong>{{ result.cardNo }}</strong></div>
-            <div class="rd-row"><span>销户日期</span><strong>{{ result.closedDate }}</strong></div>
+            <div class="rd-row"><span>销户本息总额</span><strong>{{ result.payoutAmount }}</strong></div>
+            <div class="rd-row"><span>销户日期</span><strong>{{ result.closeDate }}</strong></div>
           </div>
           <button class="rd-btn" @click="resultVisible = false">确 定</button>
         </div>
@@ -76,7 +77,7 @@ const formRef = ref()
 const loading = ref(false)
 const confirmVisible = ref(false)
 const resultVisible = ref(false)
-const result = reactive({ accountNo: '', cardNo: '', closedDate: '' })
+const result = reactive({ accountNo: '', cardNo: '', payoutAmount: '', closeDate: '', status: '' })
 
 const form = reactive({
   cardNo: '',
@@ -101,7 +102,9 @@ async function doClose() {
     const res = await closeAccount(payload)
     result.accountNo = res.data.accountNo
     result.cardNo = res.data.cardNo
-    result.closedDate = res.data.closedDate
+    result.payoutAmount = res.data.payoutAmount
+    result.closeDate = res.data.closeDate
+    result.status = res.data.status
     confirmVisible.value = false
     resultVisible.value = true
   } catch (e) {}
