@@ -174,7 +174,6 @@ public class InterestService {
             trans.setTransNo(account.getBranchCode() + datePart + TransType.DEPOSIT.getCode() + timePart + nanoPart + seq);
         }
         trans.setAccountId(account.getAccountId());
-        trans.setOutTradeNo(req.getOutTradeNo());
         trans.setDcFlag(TransactionEnums.DcFlag.CREDIT.getCode());
         trans.setTransType(TransType.DEPOSIT.getCode());
         trans.setCurrency("CNY");
@@ -272,7 +271,6 @@ public class InterestService {
             trans.setTransNo(account.getBranchCode() + datePart + TransType.DEPOSIT.getCode() + timePart + nanoPart + seq);
         }
         trans.setAccountId(account.getAccountId());
-        trans.setOutTradeNo(req.getOutTradeNo());
         trans.setDcFlag(TransactionEnums.DcFlag.CREDIT.getCode());
         trans.setTransType(TransType.INTEREST.getCode());
         trans.setCurrency("CNY");
